@@ -137,6 +137,31 @@ const WALKERS: [number, number][] = [
   [7.6, 6.0],
 ];
 
+// Muncul dengan jatuh pelan dari atas + fade. Dipakai untuk semua elemen kota
+// dengan delay berbeda-beda supaya tampil satu per satu.
+function Pop({
+  delay,
+  reduce,
+  from = 14,
+  children,
+}: {
+  delay: number;
+  reduce: boolean;
+  from?: number;
+  children: ReactNode;
+}) {
+  if (reduce) return <g>{children}</g>;
+  return (
+    <motion.g
+      initial={{ opacity: 0, y: -from }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay, duration: 0.45, ease: [0.2, 0.8, 0.2, 1] }}
+    >
+      {children}
+    </motion.g>
+  );
+}
+
 // Kotak generik: hanya menggambar sisi yang menghadap kamera, lalu atapnya.
 function Box({
   v,
@@ -499,6 +524,7 @@ interface Item {
   d: number;
   k: string;
   n: ReactNode;
+  delay: number;
 }
 
 export function CityScene({ agents }: { agents: CityAgent[] }) {
@@ -517,6 +543,16 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
   } | null>(null);
   const vel = useRef(0); // derajat/ms, dipakai untuk inersia
   const suppressClick = useRef(false); // drag tidak boleh dihitung sebagai klik meja
+  // Animasi masuk berurutan hanya saat kota (atau lantai) baru muncul. Sesudahnya
+  // delay = 0 supaya Wright yang datang lewat realtime langsung tampil.
+  const [intro, setIntro] = useState(true);
+  useEffect(() => {
+    setIntro(true);
+    const t = setTimeout(() => setIntro(false), 3200);
+    return () => clearTimeout(t);
+  }, [floor]);
+  const dl = (sec: number) => (intro ? sec : 0);
+
   const reduceRef = useRef(reduce);
   reduceRef.current = reduce;
 
@@ -616,11 +652,13 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
   const behind: Item[] = []; // di luar bangunan & di belakang dinding jauh
   const front: Item[] = []; // di dalam ruangan, atau di luar tapi di depan
 
-  placed.forEach(({ a, w, x, y }) => {
+  const deskDelay = (idx: number) => dl(0.6 + idx * 0.06);
+  placed.forEach(({ a, w, x, y }, idx) => {
     const dim = !!focus && focus !== w;
     front.push({
       d: v.dep(x + 0.5, y + 0.3),
       k: `d-${a.id}`,
+      delay: deskDelay(idx),
       n: (
         <g {...hitProps(a, true)} opacity={dim ? 0.35 : 1} className={hitClass}>
           <title>{`$${a.ticker} · ${a.status}`}</title>
@@ -631,6 +669,7 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
     front.push({
       d: v.dep(x + 0.5, y + 0.95),
       k: `p-${a.id}`,
+      delay: deskDelay(idx) + (intro ? 0.15 : 0),
       n: (
         <g
           {...hitProps(a, false)}
@@ -650,19 +689,32 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
     });
   });
 
-  const addOutside = (x: number, y: number, k: string, n: ReactNode) => {
+  const addOutside = (
+    x: number,
+    y: number,
+    k: string,
+    delay: number,
+    n: ReactNode,
+  ) => {
     const d = v.dep(x, y);
-    (!inBlock(x, y) && d < blockDep ? behind : front).push({ d, k, n });
+    (!inBlock(x, y) && d < blockDep ? behind : front).push({ d, k, n, delay });
   };
   [...PLAZA_TREES, ...(floor === 'L2' ? TERRACE_TREES : [])].forEach(
     ([x, y, s], i) =>
-      addOutside(x, y, `t${i}`, <Tree v={v} x={x} y={y} s={s} />),
+      addOutside(
+        x,
+        y,
+        `t${i}`,
+        dl(0.5 + i * 0.06),
+        <Tree v={v} x={x} y={y} s={s} />,
+      ),
   );
   WALKERS.forEach(([x, y], i) =>
     addOutside(
       x,
       y,
       `w${i}`,
+      dl(1.0 + i * 0.1),
       <Person v={v} x={x} y={y} color="#3b4058" reduce={reduce} />,
     ),
   );
@@ -794,70 +846,90 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
           <AnimatePresence mode="wait">
             <motion.g
               key={floor}
-              initial={reduce ? false : { opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={reduce ? undefined : { opacity: 0, y: -10 }}
-              transition={{ duration: 0.25 }}
+              initial={false}
+              animate={{ opacity: 1 }}
+              exit={reduce ? undefined : { opacity: 0 }}
+              transition={{ duration: 0.2 }}
             >
-              <Slab v={v} />
+              <Pop delay={0} reduce={reduce} from={18}>
+                <Slab v={v} />
+              </Pop>
               {wards.map((w, i) => (
-                <RoomFloor
-                  key={w}
-                  v={v}
-                  ward={w}
-                  index={i}
-                  dim={!!focus && focus !== w}
-                />
+                <Pop key={w} delay={dl(0.15 + i * 0.12)} reduce={reduce}>
+                  <RoomFloor
+                    v={v}
+                    ward={w}
+                    index={i}
+                    dim={!!focus && focus !== w}
+                  />
+                </Pop>
               ))}
               {behind.map((it) => (
-                <g key={it.k}>{it.n}</g>
+                <Pop key={it.k} delay={it.delay} reduce={reduce}>
+                  {it.n}
+                </Pop>
               ))}
               {wards.map((w, i) => (
-                <RoomWalls
-                  key={w}
-                  v={v}
-                  ward={w}
-                  index={i}
-                  count={wards.length}
-                  dim={!!focus && focus !== w}
-                />
+                <Pop key={w} delay={dl(0.3 + i * 0.12)} reduce={reduce}>
+                  <RoomWalls
+                    v={v}
+                    ward={w}
+                    index={i}
+                    count={wards.length}
+                    dim={!!focus && focus !== w}
+                  />
+                </Pop>
               ))}
               {front.map((it) => (
-                <g key={it.k}>{it.n}</g>
+                <Pop key={it.k} delay={it.delay} reduce={reduce}>
+                  {it.n}
+                </Pop>
               ))}
 
               {/* Lapisan label: selalu di atas, tidak ikut terhalang objek lain */}
-              {placed.map(({ a, w, x, y }) => {
+              {placed.map(({ a, w, x, y }, idx) => {
                 const [tx, ty] = v.P(x + 0.5, y + 0.3);
                 return (
-                  <text
+                  <Pop
                     key={`l-${a.id}`}
-                    x={tx}
-                    y={ty + 15}
-                    textAnchor="middle"
-                    fontSize={7.5}
-                    fontWeight={700}
-                    fill="#4a516d"
-                    stroke="#f3f4f8"
-                    strokeWidth={2.5}
-                    strokeLinejoin="round"
-                    paintOrder="stroke"
-                    opacity={!!focus && focus !== w ? 0.35 : 1}
-                    pointerEvents="none"
+                    delay={deskDelay(idx) + (intro ? 0.25 : 0)}
+                    reduce={reduce}
+                    from={4}
                   >
-                    ${a.ticker}
-                  </text>
+                    <text
+                      x={tx}
+                      y={ty + 15}
+                      textAnchor="middle"
+                      fontSize={7.5}
+                      fontWeight={700}
+                      fill="#4a516d"
+                      stroke="#f3f4f8"
+                      strokeWidth={2.5}
+                      strokeLinejoin="round"
+                      paintOrder="stroke"
+                      opacity={!!focus && focus !== w ? 0.35 : 1}
+                      pointerEvents="none"
+                    >
+                      ${a.ticker}
+                    </text>
+                  </Pop>
                 );
               })}
               {wards.map((w, i) => (
-                <RoomLabel
+                <Pop
                   key={`rl-${w}`}
-                  v={v}
-                  ward={w}
-                  index={i}
-                  dim={!!focus && focus !== w}
-                  extra={Math.max(0, byWard[w].length - MAX_DESKS)}
-                />
+                  delay={dl(0.9 + placed.length * 0.06 + i * 0.12)}
+                  reduce={reduce}
+                  from={10}
+                >
+                  <RoomLabel
+                    v={v}
+                    ward={w}
+                    index={i}
+                    dim={!!focus && focus !== w}
+                    extra={Math.max(0, byWard[w].length - MAX_DESKS)}
+                  />
+                </Pop>
               ))}
             </motion.g>
           </AnimatePresence>

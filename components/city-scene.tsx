@@ -1,13 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  AnimatePresence,
-  motion,
-  useAnimationFrame,
-  useReducedMotion,
-} from 'motion/react';
+import * as THREE from 'three';
 import {
   DISTRICT_ORDER,
   WARD_COLOR_HEX,
@@ -16,8 +11,10 @@ import {
   type DistrictId,
 } from '@/types/domain';
 
-// API sama dengan versi sebelumnya: <CityScene agents={...} />,
-// jadi realtime-city-dashboard.tsx tidak perlu diubah.
+// Kota 3D dari wagehold-prototype.html: Counting House di tengah, 5 Ward
+// melingkar dengan jalan, gedung Wright yang tingginya mengikuti revenue.
+// API tetap: <CityScene agents={...} />, jadi realtime-city-dashboard.tsx
+// tidak perlu diubah.
 export interface CityAgent {
   id: string;
   ticker: string;
@@ -26,914 +23,943 @@ export interface CityAgent {
   status: AgentStatus;
 }
 
-type Floor = 'L1' | 'L2';
-const FLOOR_WARDS: Record<Floor, DistrictId[]> = {
-  L1: ['research', 'onchain', 'creative'],
-  L2: ['security', 'community'],
+// Layout & proporsi sama persis dengan prototipe.
+const RING_RADIUS = 13.5;
+const BUILDING_OFFSETS: [number, number][] = [
+  [-1.9, -1.9],
+  [1.9, -1.9],
+  [-1.9, 1.9],
+  [1.9, 1.9],
+];
+const heightFor = (revenue30d: number) => 1.2 + revenue30d / 1500;
+
+const DRAG_RAD_PER_PX = 0.008;
+const INERTIA_S = 0.4; // seberapa cepat putaran meredam setelah drag dilepas
+const NUDGE_RAD = Math.PI / 4; // tombol ‹ ›
+
+const clamp01 = (k: number) => Math.min(1, Math.max(0, k));
+const easeOut = (k: number) => 1 - Math.pow(1 - k, 3);
+const easeBack = (k: number) => {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2);
 };
-const floorOf = (d: DistrictId): Floor =>
-  FLOOR_WARDS.L1.includes(d) ? 'L1' : 'L2';
 
-const STATUS_COLOR: Record<AgentStatus, string> = {
-  idle: '#9aa1bd',
-  working: '#e6a92a',
-  review: '#4f86f0',
-};
-
-// Proyeksi isometrik: 1 tile = 32x16 px. Lantai 12x8 tile, ruangan 4x4 tile.
-const TW = 32;
-const TH = 16;
-const CX = 360; // titik pusat lantai di layar (viewBox 720x410)
-const CY = 210;
-const W = 12;
-const D = 8;
-const MX = W / 2; // pusat putaran (dunia)
-const MY = D / 2;
-const RW = 4;
-const WALL_H = 28;
-const SLAB_T = 12;
-const MAX_DESKS = 6;
-
-// Drag: 0.4 derajat per piksel geser (~900px = 1 putaran). Setelah dilepas kota
-// meluncur dengan inersia; INERTIA_MS = seberapa cepat lajunya meredam.
-const DRAG_DEG_PER_PX = 0.4;
-const INERTIA_MS = 400;
-const NUDGE_DEG = 45; // tombol ‹ ›
-const norm = (a: number) => ((a % 360) + 360) % 360;
-
-type Pt = [number, number];
-const poly = (...a: Pt[]) => a.map((p) => p.join(',')).join(' ');
-
-function shade(hex: string, amt: number) {
-  const n = parseInt(hex.slice(1), 16);
-  const f = (c: number) =>
-    Math.round(amt < 0 ? c * (1 + amt) : c + (255 - c) * amt);
-  return `rgb(${f((n >> 16) & 255)},${f((n >> 8) & 255)},${f(n & 255)})`;
+function windowCanvas(emissive: boolean) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  g.fillStyle = emissive ? '#000' : '#ffffff';
+  g.fillRect(0, 0, 64, 64);
+  g.fillStyle = emissive ? '#fff' : '#7c9cc8';
+  [
+    [8, 10],
+    [36, 10],
+    [8, 38],
+    [36, 38],
+  ].forEach(([x, y]) => g.fillRect(x, y, 20, 16));
+  return c;
 }
 
-// ---------------------------------------------------------------------------
-// View: semua koordinat dunia diputar mengelilingi pusat lantai sebelum
-// diproyeksikan. Kamera tetap; yang berputar adalah "piringan"-nya.
-// ---------------------------------------------------------------------------
-interface View {
-  P: (x: number, y: number, z?: number) => Pt;
-  /** Kedalaman: makin besar = makin dekat ke kamera (untuk painter's algorithm). */
-  dep: (x: number, y: number) => number;
-  /** Apakah sisi dengan normal dunia (nx, ny) menghadap kamera? */
-  vis: (nx: number, ny: number) => boolean;
-  /** Warna sisi luar (kotak) dengan pencahayaan sesuai arah muka. */
-  side: (base: string, nx: number, ny: number) => string;
-  /** Warna sisi dalam dinding (yang terlihat kamera). */
-  wall: (base: string, nx: number, ny: number) => string;
+// Label HTML di atas canvas. Gaya di-inline (bukan kelas Tailwind) karena
+// elemennya dibuat lewat DOM API di luar React, jadi tidak ikut discan Tailwind.
+// Palet terang: pil putih untuk ticker, papan berwarna Ward untuk nama Ward.
+const INK = '#2b3257';
+type LabelKind = 'bld' | 'dist' | 'hall';
+function makeLabel(kind: LabelKind, text: string, color?: string) {
+  const el = document.createElement('div');
+  el.textContent = text;
+  const s = el.style;
+  s.position = 'absolute';
+  s.whiteSpace = 'nowrap';
+  if (kind === 'bld') {
+    s.transform = 'translate(-50%,-100%)';
+    s.fontFamily = 'var(--font-mono)';
+    s.fontSize = '10px';
+    s.fontWeight = '500';
+    s.padding = '2px 7px';
+    s.borderRadius = '999px';
+    s.background = 'rgba(255,255,255,.94)';
+    s.border = '1px solid rgba(43,50,87,.10)';
+    s.boxShadow = '0 2px 6px rgba(43,50,87,.16)';
+    s.color = INK;
+  } else if (kind === 'dist') {
+    // Papan nama berwarna Ward, seperti signage ruangan di gambar referensi.
+    s.transform = 'translate(-50%,0)';
+    s.fontFamily = 'var(--font-display)';
+    s.fontSize = '11.5px';
+    s.fontWeight = '700';
+    s.letterSpacing = '.04em';
+    s.textTransform = 'uppercase';
+    s.padding = '3px 11px';
+    s.borderRadius = '999px';
+    s.background = new THREE.Color(color ?? '#888888')
+      .multiplyScalar(0.9)
+      .getStyle();
+    s.boxShadow = '0 3px 8px rgba(43,50,87,.22)';
+    s.color = '#fff';
+  } else {
+    s.transform = 'translate(-50%,-100%)';
+    s.fontFamily = 'var(--font-body)';
+    s.fontSize = '10.5px';
+    s.fontWeight = '600';
+    s.letterSpacing = '.06em';
+    s.textTransform = 'uppercase';
+    s.color = '#a0741a';
+    s.textShadow = '0 0 6px #fff, 0 1px 0 #fff';
+  }
+  return el;
+}
+function highlightLabel(el: HTMLDivElement, on: boolean) {
+  el.style.background = on ? INK : 'rgba(255,255,255,.94)';
+  el.style.color = on ? '#fff' : INK;
 }
 
-function makeView(deg: number): View {
-  const th = (deg * Math.PI) / 180;
-  const c = Math.cos(th);
-  const s = Math.sin(th);
-  const rot = (x: number, y: number): Pt => {
-    const u = x - MX;
-    const v = y - MY;
-    return [u * c - v * s, u * s + v * c];
+// PRNG kecil dengan seed tetap supaya posisi pohon selalu sama tiap mount.
+function mulberry32(seed: number) {
+  let a = seed;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  // t = -1 (muka menghadap kiri-bawah, terang) .. +1 (kanan-bawah, gelap)
-  const t = (nx: number, ny: number) =>
-    (nx * c - ny * s - (nx * s + ny * c)) / Math.SQRT2;
-  return {
-    P: (x, y, z = 0) => {
-      const [a, b] = rot(x, y);
-      return [CX + (a - b) * TW, CY + (a + b) * TH - z];
-    },
-    dep: (x, y) => {
-      const [a, b] = rot(x, y);
-      return a + b;
-    },
-    vis: (nx, ny) => nx * c - ny * s + (nx * s + ny * c) > 1e-6,
-    side: (base, nx, ny) => shade(base, -0.03 - 0.07 * t(nx, ny)),
-    wall: (base, nx, ny) => shade(base, 0.22 - 0.18 * t(-nx, -ny)),
-  };
 }
 
-const PLAZA_TREES: [number, number, number][] = [
-  [1.0, 5.2, 1],
-  [2.8, 6.9, 0.9],
-  [4.3, 5.4, 1.1],
-  [8.2, 5.3, 1],
-  [9.8, 6.9, 1.1],
-  [11.0, 5.2, 0.9],
-  [0.8, 7.3, 0.8],
-  [10.9, 7.4, 0.8],
-];
-const TERRACE_TREES: [number, number, number][] = [
-  [9.0, 1.4, 1.1],
-  [10.9, 1.1, 1],
-  [9.7, 3.0, 0.9],
-  [11.2, 3.1, 1.1],
-];
-const WALKERS: [number, number][] = [
-  [6.0, 5.4],
-  [6.2, 7.2],
-  [3.4, 6.1],
-  [7.6, 6.0],
-];
+interface Tree {
+  root: THREE.Group;
+  phase: number;
+}
 
-// Muncul dengan jatuh pelan dari atas + fade. Dipakai untuk semua elemen kota
-// dengan delay berbeda-beda supaya tampil satu per satu.
-function Pop({
-  delay,
-  reduce,
-  from = 14,
-  children,
-}: {
+interface Building {
+  agentId: string;
+  district: DistrictId;
+  mesh: THREE.Mesh;
+  wallMaterial: THREE.MeshLambertMaterial;
+  map: THREE.CanvasTexture;
+  emissiveMap: THREE.CanvasTexture;
+  beacon: THREE.Mesh<THREE.OctahedronGeometry, THREE.MeshLambertMaterial>;
+  label: HTMLDivElement;
+  h: number;
+  target: number;
+  phase: number;
+  glow: number;
+  status: AgentStatus;
+  revenue: number;
+  delay: number; // detik, untuk animasi muncul satu per satu
+}
+
+interface Pop {
+  o: THREE.Object3D;
   delay: number;
-  reduce: boolean;
-  from?: number;
-  children: ReactNode;
-}) {
-  if (reduce) return <g>{children}</g>;
-  return (
-    <motion.g
-      initial={{ opacity: 0, y: -from }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay, duration: 0.45, ease: [0.2, 0.8, 0.2, 1] }}
-    >
-      {children}
-    </motion.g>
-  );
+  dur: number;
+  mode: 'uniform' | 'x';
+  ease: (k: number) => number;
 }
 
-// Kotak generik: hanya menggambar sisi yang menghadap kamera, lalu atapnya.
-function Box({
-  v,
-  x,
-  y,
-  dx,
-  dy,
-  z0,
-  z1,
-  base,
-  top,
-}: {
-  v: View;
-  x: number;
-  y: number;
-  dx: number;
-  dy: number;
-  z0: number;
-  z1: number;
-  base: string;
-  top: string;
-}) {
-  const { P } = v;
-  const faces: { n: Pt; pts: Pt[] }[] = [
-    {
-      n: [0, 1],
-      pts: [
-        P(x, y + dy, z1),
-        P(x + dx, y + dy, z1),
-        P(x + dx, y + dy, z0),
-        P(x, y + dy, z0),
-      ],
-    },
-    {
-      n: [1, 0],
-      pts: [
-        P(x + dx, y, z1),
-        P(x + dx, y + dy, z1),
-        P(x + dx, y + dy, z0),
-        P(x + dx, y, z0),
-      ],
-    },
-    {
-      n: [0, -1],
-      pts: [P(x, y, z1), P(x + dx, y, z1), P(x + dx, y, z0), P(x, y, z0)],
-    },
-    {
-      n: [-1, 0],
-      pts: [P(x, y, z1), P(x, y + dy, z1), P(x, y + dy, z0), P(x, y, z0)],
-    },
-  ];
-  return (
-    <g>
-      {faces
-        .filter((f) => v.vis(f.n[0], f.n[1]))
-        .map((f, i) => (
-          <polygon
-            key={i}
-            points={poly(...f.pts)}
-            fill={v.side(base, f.n[0], f.n[1])}
-          />
-        ))}
-      <polygon
-        points={poly(
-          P(x, y, z1),
-          P(x + dx, y, z1),
-          P(x + dx, y + dy, z1),
-          P(x, y + dy, z1),
-        )}
-        fill={top}
-      />
-    </g>
-  );
-}
-
-function Slab({ v }: { v: View }) {
-  const { P } = v;
-  return (
-    <g>
-      <Box
-        v={v}
-        x={0}
-        y={0}
-        dx={W}
-        dy={D}
-        z0={-SLAB_T}
-        z1={0}
-        base="#c9c3b6"
-        top="#ebe8e1"
-      />
-      {/* taman + jalur di depan ruangan */}
-      <polygon
-        points={poly(
-          P(0.4, 4.6),
-          P(W - 0.4, 4.6),
-          P(W - 0.4, D - 0.4),
-          P(0.4, D - 0.4),
-        )}
-        fill="#bcd8a4"
-      />
-      <polygon
-        points={poly(P(5.3, 4.2), P(6.7, 4.2), P(6.7, D), P(5.3, D))}
-        fill="#f6f3ec"
-      />
-    </g>
-  );
-}
-
-function RoomFloor({
-  v,
-  ward,
-  index,
-  dim,
-}: {
-  v: View;
-  ward: DistrictId;
-  index: number;
-  dim: boolean;
-}) {
-  const { P } = v;
-  const c = WARD_COLOR_HEX[ward];
-  const rx = index * RW;
-  return (
-    <polygon
-      points={poly(P(rx, 0), P(rx + RW, 0), P(rx + RW, RW), P(rx, RW))}
-      fill={shade(c, 0.8)}
-      stroke={shade(c, 0.3)}
-      strokeWidth={1}
-      opacity={dim ? 0.35 : 1}
-      style={{ transition: 'opacity .25s' }}
-    />
-  );
-}
-
-// Dinding hanya digambar di sisi yang MEMBELAKANGI kamera. Sekat antar ruangan
-// dilewati: berdiri di depan ruangan sebelahnya dan akan menutupinya.
-function RoomWalls({
-  v,
-  ward,
-  index,
-  count,
-  dim,
-}: {
-  v: View;
-  ward: DistrictId;
-  index: number;
-  count: number;
-  dim: boolean;
-}) {
-  const c = WARD_COLOR_HEX[ward];
-  const x0 = index * RW;
-  const x1 = x0 + RW;
-  const sides: { p: Pt; q: Pt; n: Pt }[] = [
-    { p: [x0, 0], q: [x1, 0], n: [0, -1] },
-    { p: [x0, RW], q: [x1, RW], n: [0, 1] },
-  ];
-  if (index === 0) sides.push({ p: [x0, 0], q: [x0, RW], n: [-1, 0] });
-  if (index === count - 1) sides.push({ p: [x1, 0], q: [x1, RW], n: [1, 0] });
-  return (
-    <g opacity={dim ? 0.35 : 1} style={{ transition: 'opacity .25s' }}>
-      {sides
-        .filter((s) => !v.vis(s.n[0], s.n[1]))
-        .map((s, i) => {
-          const a = v.P(s.p[0], s.p[1]);
-          const b = v.P(s.q[0], s.q[1]);
-          const at = v.P(s.p[0], s.p[1], WALL_H);
-          const bt = v.P(s.q[0], s.q[1], WALL_H);
-          return (
-            <g key={i}>
-              <polygon
-                points={poly(a, b, bt, at)}
-                fill={v.wall(c, s.n[0], s.n[1])}
-              />
-              <polyline
-                points={poly(at, bt)}
-                fill="none"
-                stroke="#fff"
-                strokeWidth={1.5}
-              />
-            </g>
-          );
-        })}
-    </g>
-  );
-}
-
-function RoomLabel({
-  v,
-  ward,
-  index,
-  dim,
-  extra,
-}: {
-  v: View;
-  ward: DistrictId;
-  index: number;
-  dim: boolean;
-  extra: number;
-}) {
-  const c = WARD_COLOR_HEX[ward];
-  const text = extra > 0 ? `${WARD_LABEL[ward]} +${extra}` : WARD_LABEL[ward];
-  // Label melayang tetap di atas ruangan supaya tidak melompat saat kota berputar.
-  const [lx, ly] = v.P(index * RW + RW / 2, RW / 2, 92);
-  const w = text.length * 5.8 + 18;
-  return (
-    <g
-      opacity={dim ? 0.35 : 1}
-      style={{ transition: 'opacity .25s' }}
-      pointerEvents="none"
-    >
-      <rect
-        x={lx - w / 2}
-        y={ly - 10}
-        width={w}
-        height={17}
-        rx={8.5}
-        fill={c}
-      />
-      <text
-        x={lx}
-        y={ly + 2}
-        textAnchor="middle"
-        fontSize={9.5}
-        fontWeight={700}
-        fill="#fff"
-        letterSpacing={0.3}
-      >
-        {text}
-      </text>
-    </g>
-  );
-}
-
-function Person({
-  v,
-  x,
-  y,
-  color,
-  status,
-  reduce,
-}: {
-  v: View;
-  x: number;
-  y: number;
-  color: string;
-  status?: AgentStatus;
-  reduce: boolean;
-}) {
-  const [px, py] = v.P(x, y);
-  const sc = status ? STATUS_COLOR[status] : null;
-  return (
-    <g>
-      <ellipse cx={px} cy={py} rx={6} ry={2.6} fill="#000" opacity={0.15} />
-      <rect
-        x={px - 4.5}
-        y={py - 15}
-        width={9}
-        height={13}
-        rx={4.5}
-        fill={color}
-      />
-      <circle cx={px} cy={py - 19} r={4} fill="#f0d2b6" />
-      {sc && (
-        <circle
-          cx={px}
-          cy={py - 30}
-          r={3.2}
-          fill={sc}
-          stroke="#fff"
-          strokeWidth={1}
-        >
-          {status === 'working' && !reduce && (
-            <>
-              <animate
-                attributeName="r"
-                values="3.2;8"
-                dur="1.6s"
-                repeatCount="indefinite"
-              />
-              <animate
-                attributeName="opacity"
-                values="1;0.25"
-                dur="1.6s"
-                repeatCount="indefinite"
-              />
-            </>
-          )}
-        </circle>
-      )}
-    </g>
-  );
-}
-
-// Meja + monitor. Orangnya digambar terpisah supaya bisa diurutkan sendiri
-// (di sudut pandang tertentu dia ada di belakang meja).
-function Desk({ v, a, x, y }: { v: View; a: CityAgent; x: number; y: number }) {
-  const { P } = v;
-  const h = 9;
-  const front = v.vis(0, 1); // monitor menghadap +y
-  const screen = !front
-    ? '#3a3f57'
-    : a.status === 'working'
-      ? '#ffd166'
-      : a.status === 'review'
-        ? '#8fb4ff'
-        : '#2a3050';
-  return (
-    <g>
-      <Box
-        v={v}
-        x={x}
-        y={y}
-        dx={1.0}
-        dy={0.6}
-        z0={0}
-        z1={h}
-        base="#cfc9bb"
-        top="#f7f5f0"
-      />
-      <polygon
-        points={poly(
-          P(x + 0.25, y + 0.15, h),
-          P(x + 0.75, y + 0.15, h),
-          P(x + 0.75, y + 0.15, h + 8),
-          P(x + 0.25, y + 0.15, h + 8),
-        )}
-        fill={screen}
-      />
-    </g>
-  );
-}
-
-function Tree({ v, x, y, s }: { v: View; x: number; y: number; s: number }) {
-  const [px, py] = v.P(x, y);
-  return (
-    <g>
-      <ellipse
-        cx={px}
-        cy={py}
-        rx={11 * s}
-        ry={4 * s}
-        fill="#000"
-        opacity={0.12}
-      />
-      <rect
-        x={px - 2}
-        y={py - 12 * s}
-        width={4}
-        height={12 * s}
-        fill="#7a5a3a"
-      />
-      <circle cx={px} cy={py - 22 * s} r={11 * s} fill="#4f9a58" />
-      <circle cx={px - 6 * s} cy={py - 15 * s} r={8 * s} fill="#64b06a" />
-      <circle cx={px + 6 * s} cy={py - 16 * s} r={8 * s} fill="#3f8749" />
-    </g>
-  );
-}
-
-interface Item {
-  d: number;
-  k: string;
-  n: ReactNode;
-  delay: number;
+interface FlyingCoin {
+  m: THREE.Mesh;
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  t: number;
+  dur: number;
+  fade: boolean;
 }
 
 export function CityScene({ agents }: { agents: CityAgent[] }) {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const labelsRef = useRef<HTMLDivElement>(null);
+  const nudgeRef = useRef<((dir: 1 | -1) => void) | null>(null);
   const router = useRouter();
-  const reduce = !!useReducedMotion();
-  const [floor, setFloor] = useState<Floor>('L1');
-  const [focus, setFocus] = useState<DistrictId | null>(null);
-  const [angle, setAngle] = useState(0); // derajat
-  const [grabbing, setGrabbing] = useState(false);
 
-  const drag = useRef<{
-    startX: number;
-    x: number;
-    t: number;
-    moved: boolean;
-  } | null>(null);
-  const vel = useRef(0); // derajat/ms, dipakai untuk inersia
-  const suppressClick = useRef(false); // drag tidak boleh dihitung sebagai klik meja
-  // Animasi masuk berurutan hanya saat kota (atau lantai) baru muncul. Sesudahnya
-  // delay = 0 supaya Wright yang datang lewat realtime langsung tampil.
-  const [intro, setIntro] = useState(true);
+  // Data terbaru selalu lewat ref supaya loop animasi (di luar siklus render
+  // React) tidak memegang closure data basi.
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
+
   useEffect(() => {
-    setIntro(true);
-    const t = setTimeout(() => setIntro(false), 3200);
-    return () => clearTimeout(t);
-  }, [floor]);
-  const dl = (sec: number) => (intro ? sec : 0);
+    const stage = stageRef.current;
+    const labelsEl = labelsRef.current;
+    if (!stage || !labelsEl) return;
 
-  const reduceRef = useRef(reduce);
-  reduceRef.current = reduce;
+    const reduceMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
 
-  // Inersia: setelah dilepas, putaran melambat pelan-pelan.
-  useAnimationFrame((_, delta) => {
-    if (drag.current || Math.abs(vel.current) < 0.004) return;
-    const dt = Math.min(delta, 50);
-    setAngle((a) => norm(a + vel.current * dt));
-    vel.current *= Math.exp(-dt / INERTIA_MS);
-  });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    const cv = renderer.domElement;
+    cv.style.display = 'block';
+    cv.style.width = '100%';
+    cv.style.height = '100%';
+    cv.style.touchAction = 'none';
+    stage.insertBefore(cv, labelsEl);
 
-  // Listener di window supaya drag tetap jalan walau kursor keluar dari kotak scene.
-  useEffect(() => {
-    const move = (e: PointerEvent) => {
-      const d = drag.current;
-      if (!d) return;
-      if (!d.moved && Math.abs(e.clientX - d.startX) < 4) return;
-      const now = performance.now();
-      const deg = -(e.clientX - d.x) * DRAG_DEG_PER_PX; // geser ke kanan = bagian depan ikut ke kanan
-      d.moved = true;
-      setAngle((a) => norm(a + deg));
-      vel.current = 0.6 * (deg / Math.max(now - d.t, 1)) + 0.4 * vel.current;
-      d.x = e.clientX;
-      d.t = now;
-    };
-    const up = () => {
-      const d = drag.current;
-      if (!d) return;
-      if (d.moved) suppressClick.current = true;
-      // Tahan lama sebelum dilepas, atau reduced-motion = tidak meluncur.
-      if (reduceRef.current || performance.now() - d.t > 80) vel.current = 0;
-      drag.current = null;
-      setGrabbing(false);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-    window.addEventListener('pointercancel', up);
-    return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      window.removeEventListener('pointercancel', up);
-    };
-  }, []);
+    const scene = new THREE.Scene();
+    const S = 30;
+    const camera = new THREE.OrthographicCamera(-S, S, S, -S, -200, 400);
+    let theta = Math.PI / 4;
+    let thetaVel = 0; // rad/detik, inersia
+    let zoom = 1;
 
-  const nudge = (dir: 1 | -1) => {
-    if (reduce) setAngle((a) => norm(a - dir * NUDGE_DEG));
-    else vel.current = (-dir * NUDGE_DEG) / INERTIA_MS; // meluncur tepat ~45 derajat
-  };
+    function placeCam() {
+      const R = 60;
+      camera.position.set(R * Math.cos(theta), R * 0.82, R * Math.sin(theta));
+      camera.lookAt(0, 1.5, 0);
+    }
 
-  const byWard = useMemo(() => {
-    const m = {} as Record<DistrictId, CityAgent[]>;
-    DISTRICT_ORDER.forEach((d) => (m[d] = []));
-    agents.forEach((a) => m[a.district]?.push(a));
-    DISTRICT_ORDER.forEach((d) =>
-      m[d].sort((a, b) => a.ticker.localeCompare(b.ticker)),
+    function resize() {
+      const w = stage!.clientWidth;
+      const h = stage!.clientHeight;
+      if (!w || !h) return;
+      renderer.setSize(w, h, false);
+      const aspect = w / h;
+      const v = aspect < 1 ? 23 / aspect : 20;
+      camera.left = -v * aspect;
+      camera.right = v * aspect;
+      camera.top = v;
+      camera.bottom = -v;
+      camera.zoom = zoom;
+      camera.updateProjectionMatrix();
+    }
+
+    // Cahaya siang: langit putih + pantulan rumput, matahari hangat, dan fill
+    // kebiruan dari sisi berlawanan supaya sisi gelap gedung tetap berwarna.
+    // Intensitas x PI karena r155+ tidak lagi memakai "legacy lights".
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xdde6cf, 0.6 * Math.PI));
+    const sun = new THREE.DirectionalLight(0xfff1d6, 0.45 * Math.PI);
+    sun.position.set(20, 40, 10);
+    scene.add(sun);
+    const fill = new THREE.DirectionalLight(0xbfd3ff, 0.2 * Math.PI);
+    fill.position.set(-20, 15, -20);
+    scene.add(fill);
+
+    const ground = new THREE.Mesh(new THREE.CylinderGeometry(22, 22, 0.6, 64), [
+      new THREE.MeshLambertMaterial({ color: 0xd9d1bf }), // sisi: lempeng beige
+      new THREE.MeshLambertMaterial({ color: 0x93c67f }), // atas: rumput segar
+      new THREE.MeshLambertMaterial({ color: 0xd9d1bf }),
+    ]);
+    ground.position.y = -0.5;
+    scene.add(ground);
+
+    const baseMap = new THREE.CanvasTexture(windowCanvas(false));
+    baseMap.colorSpace = THREE.SRGBColorSpace;
+    const baseEmissive = new THREE.CanvasTexture(windowCanvas(true));
+    baseEmissive.colorSpace = THREE.SRGBColorSpace;
+
+    const pops: Pop[] = [];
+
+    // Counting House (Guild Hall)
+    const hall = new THREE.Group();
+    const hallBase = new THREE.Mesh(
+      new THREE.CylinderGeometry(3.2, 3.6, 1.2, 6),
+      new THREE.MeshLambertMaterial({ color: 0xe6dcc8 }),
     );
-    return m;
-  }, [agents]);
+    hallBase.position.y = 0.6;
+    hall.add(hallBase);
+    const hallTower = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.9, 2.4, 3.2, 6),
+      new THREE.MeshLambertMaterial({
+        color: 0xe8b64c,
+        emissive: 0x8a5f10,
+        emissiveIntensity: 0.3,
+      }),
+    );
+    hallTower.position.y = 2.8;
+    hall.add(hallTower);
+    const hallCap = new THREE.Mesh(
+      new THREE.ConeGeometry(2.1, 1.6, 6),
+      new THREE.MeshLambertMaterial({
+        color: 0xf6cf5f,
+        emissive: 0xa77a12,
+        emissiveIntensity: 0.35,
+      }),
+    );
+    hallCap.position.y = 5.2;
+    hall.add(hallCap);
+    scene.add(hall);
+    pops.push({
+      o: hall,
+      delay: 0.15,
+      dur: 0.7,
+      mode: 'uniform',
+      ease: easeBack,
+    });
 
-  const working = agents.filter((a) => a.status === 'working').length;
-  const wards = FLOOR_WARDS[floor];
-  const v = makeView(angle);
+    const buildings = new Map<string, Building>();
+    const pickables: THREE.Mesh[] = [];
+    const distLabels: {
+      el: HTMLDivElement;
+      pos: THREE.Vector3;
+      delay: number;
+    }[] = [];
 
-  // Posisi meja (koordinat dunia, tidak tergantung sudut putar).
-  const placed = wards.flatMap((w, i) => {
-    const shown = byWard[w].slice(0, MAX_DESKS);
-    const cols = shown.length > 4 ? 3 : 2;
-    return shown.map((a, j) => ({
-      a,
-      w,
-      // Baris berjarak 1.85 tile supaya meja tidak saling menimpa.
-      x: i * RW + (cols === 3 ? 0.3 + (j % 3) * 1.25 : 0.7 + (j % 2) * 1.9),
-      y: 0.4 + Math.floor(j / cols) * 1.85,
-    }));
-  });
+    DISTRICT_ORDER.forEach((districtId, i) => {
+      const ang = -Math.PI / 2 + (i * 2 * Math.PI) / DISTRICT_ORDER.length;
+      const cx = Math.cos(ang) * RING_RADIUS;
+      const cz = Math.sin(ang) * RING_RADIUS;
+      const col = new THREE.Color(WARD_COLOR_HEX[districtId]);
+      const wardDelay = 0.6 + i * 0.24; // Ward muncul satu per satu
 
-  const hitProps = (a: CityAgent, focusable: boolean) => ({
-    onClick: () => router.push(`/agents/${a.id}`),
-    ...(focusable
-      ? {
-          role: 'link' as const,
-          tabIndex: 0,
-          'aria-label': `${a.ticker}, ${a.status}`,
-          onKeyDown: (e: React.KeyboardEvent) =>
-            e.key === 'Enter' && router.push(`/agents/${a.id}`),
+      const road = new THREE.Mesh(
+        new THREE.BoxGeometry(RING_RADIUS - 6, 0.08, 1.3),
+        new THREE.MeshLambertMaterial({ color: 0xf3efe6 }),
+      );
+      road.position.set(
+        Math.cos(ang) * (RING_RADIUS / 2 + 0.6),
+        0.02,
+        Math.sin(ang) * (RING_RADIUS / 2 + 0.6),
+      );
+      road.rotation.y = -ang;
+      scene.add(road);
+      pops.push({
+        o: road,
+        delay: wardDelay - 0.1,
+        dur: 0.45,
+        mode: 'x',
+        ease: easeOut,
+      });
+
+      const plateCol = col.clone().lerp(new THREE.Color(0xffffff), 0.72); // lantai pastel
+      const plate = new THREE.Mesh(
+        new THREE.BoxGeometry(8.4, 0.5, 8.4),
+        new THREE.MeshLambertMaterial({ color: plateCol }),
+      );
+      plate.position.set(cx, 0.2, cz);
+      plate.rotation.y = -ang;
+      scene.add(plate);
+      pops.push({
+        o: plate,
+        delay: wardDelay,
+        dur: 0.55,
+        mode: 'uniform',
+        ease: easeBack,
+      });
+
+      const rim = new THREE.LineSegments(
+        new THREE.EdgesGeometry(plate.geometry),
+        new THREE.LineBasicMaterial({
+          color: col,
+          transparent: true,
+          opacity: 0.95,
+        }),
+      );
+      rim.position.copy(plate.position);
+      rim.rotation.copy(plate.rotation);
+      scene.add(rim);
+      pops.push({
+        o: rim,
+        delay: wardDelay,
+        dur: 0.55,
+        mode: 'uniform',
+        ease: easeBack,
+      });
+
+      const distLabel = makeLabel(
+        'dist',
+        WARD_LABEL[districtId],
+        WARD_COLOR_HEX[districtId],
+      );
+      labelsEl.appendChild(distLabel);
+      distLabels.push({
+        el: distLabel,
+        pos: new THREE.Vector3(
+          Math.cos(ang) * (RING_RADIUS + 5.4),
+          0.4,
+          Math.sin(ang) * (RING_RADIUS + 5.4),
+        ),
+        delay: wardDelay + 0.2,
+      });
+
+      const members = agentsRef.current.filter(
+        (a) => a.district === districtId,
+      );
+      members.forEach((agent, k) => {
+        const offset = BUILDING_OFFSETS[k];
+        if (!offset) return; // lebih dari 4 Wright per Ward -- belum didukung layout ini
+        const [ox, oz] = offset;
+        const ca = Math.cos(-ang);
+        const sa = Math.sin(-ang);
+        const x = cx + ox * ca - oz * sa;
+        const z = cz + ox * sa + oz * ca;
+
+        const geo = new THREE.BoxGeometry(2.3, 1, 2.3);
+        geo.translate(0, 0.5, 0);
+        const map = baseMap.clone();
+        map.needsUpdate = true;
+        map.wrapS = map.wrapT = THREE.RepeatWrapping;
+        const emissiveMap = baseEmissive.clone();
+        emissiveMap.needsUpdate = true;
+        emissiveMap.wrapS = emissiveMap.wrapT = THREE.RepeatWrapping;
+
+        const wallMaterial = new THREE.MeshLambertMaterial({
+          color: col.clone().lerp(new THREE.Color(0xffffff), 0.3),
+          map,
+          emissive: new THREE.Color(0xffd58a),
+          emissiveMap,
+          emissiveIntensity: 0.05,
+        });
+        const roofMaterial = new THREE.MeshLambertMaterial({
+          color: col.clone().lerp(new THREE.Color(0xffffff), 0.62),
+        });
+        const mesh = new THREE.Mesh(geo, [
+          wallMaterial,
+          wallMaterial,
+          roofMaterial,
+          roofMaterial,
+          wallMaterial,
+          wallMaterial,
+        ]);
+        mesh.position.set(x, 0.45, z);
+        mesh.rotation.y = -ang;
+        mesh.userData.id = agent.id;
+        scene.add(mesh);
+        pickables.push(mesh);
+
+        const beacon = new THREE.Mesh(
+          new THREE.OctahedronGeometry(0.42),
+          new THREE.MeshLambertMaterial({
+            color: col,
+            emissive: col,
+            emissiveIntensity: 0.6,
+          }),
+        );
+        scene.add(beacon);
+
+        const label = makeLabel('bld', '$' + agent.ticker);
+        labelsEl.appendChild(label);
+
+        const h = heightFor(agent.revenue30d);
+        mesh.scale.y = h;
+        map.repeat.set(1, Math.max(1, Math.round(h * 0.9)));
+        emissiveMap.repeat.copy(map.repeat);
+        buildings.set(agent.id, {
+          agentId: agent.id,
+          district: districtId,
+          mesh,
+          wallMaterial,
+          map,
+          emissiveMap,
+          beacon,
+          label,
+          h,
+          target: h,
+          phase: Math.random() * 6,
+          glow: 0.05,
+          status: agent.status,
+          revenue: agent.revenue30d,
+          delay: wardDelay + 0.3 + k * 0.08,
+        });
+      });
+    });
+
+    // Pepohonan: pohon bulat & cemara low-poly di taman antar-Ward, tepi
+    // lempeng rumput, dan sekitar Counting House. Posisi di-reject kalau
+    // menabrak lempeng Ward, jalan, aula, atau papan nama Ward.
+    const GROUND_Y = -0.2; // permukaan rumput
+    const trunkGeo = new THREE.CylinderGeometry(0.12, 0.18, 1, 6);
+    trunkGeo.translate(0, 0.5, 0);
+    const blobGeo = new THREE.IcosahedronGeometry(1, 0);
+    const coneGeo = new THREE.ConeGeometry(1, 1, 7);
+    coneGeo.translate(0, 0.5, 0);
+    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x9a7b5a });
+    const leafMats = [0x6fb562, 0x82c46f, 0x5aa66a, 0x8fcb7a].map(
+      (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true }),
+    );
+    const pineMats = [0x4f9a6a, 0x5fa87a].map(
+      (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true }),
+    );
+    const blossomMat = new THREE.MeshLambertMaterial({
+      color: 0xf3b6c4,
+      flatShading: true,
+    });
+
+    const rand = mulberry32(20260928);
+    const pick = <T,>(arr: T[]) => arr[Math.floor(rand() * arr.length)];
+
+    function buildTree(kind: 'round' | 'pine' | 'blossom', size: number) {
+      const tree = new THREE.Group();
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      if (kind === 'pine') {
+        trunk.scale.set(1, 0.55, 1);
+        tree.add(trunk);
+        const mat = pick(pineMats);
+        (
+          [
+            [0.45, 0.95, 1.2],
+            [1.15, 0.72, 1.0],
+            [1.75, 0.48, 0.85],
+          ] as const
+        ).forEach(([y, r, h]) => {
+          const cone = new THREE.Mesh(coneGeo, mat);
+          cone.position.y = y;
+          cone.scale.set(r, h, r);
+          tree.add(cone);
+        });
+      } else {
+        trunk.scale.set(1, 0.95, 1);
+        tree.add(trunk);
+        const mat = kind === 'blossom' ? blossomMat : pick(leafMats);
+        const low = new THREE.Mesh(blobGeo, mat);
+        low.position.y = 1.4;
+        low.scale.set(0.85, 0.75, 0.85);
+        tree.add(low);
+        const high = new THREE.Mesh(blobGeo, mat);
+        high.position.set(0.12, 2.0, -0.05);
+        high.scale.set(0.58, 0.52, 0.58);
+        tree.add(high);
+      }
+      tree.scale.setScalar(size);
+      return tree;
+    }
+
+    const wardAngles = DISTRICT_ORDER.map(
+      (_, i) => -Math.PI / 2 + (i * 2 * Math.PI) / DISTRICT_ORDER.length,
+    );
+    function isBlocked(x: number, z: number) {
+      if (Math.hypot(x, z) < 5.2) return true; // Counting House
+      for (const ang of wardAngles) {
+        const dx = Math.cos(ang);
+        const dz = Math.sin(ang);
+        const along = x * dx + z * dz;
+        const across = Math.abs(x * dz - z * dx);
+        if (Math.abs(along - RING_RADIUS) < 5.2 && across < 5.2) return true; // lempeng Ward
+        if (along > 2.5 && along < RING_RADIUS && across < 2.0) return true; // jalan
+        if (
+          Math.hypot(
+            x - dx * (RING_RADIUS + 5.4),
+            z - dz * (RING_RADIUS + 5.4),
+          ) < 2.6
+        )
+          return true; // papan nama Ward
+      }
+      return false;
+    }
+
+    const treeSpots: [number, number][] = [];
+    const trees: Tree[] = [];
+    const TREE_COUNT = 40;
+    for (
+      let attempt = 0;
+      attempt < 600 && trees.length < TREE_COUNT;
+      attempt++
+    ) {
+      const a = rand() * Math.PI * 2;
+      const r = 5.8 + Math.sqrt(rand()) * 15; // 5.8 .. 20.8, tetap di dalam lempeng rumput
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      if (isBlocked(x, z)) continue;
+      if (treeSpots.some(([tx, tz]) => Math.hypot(tx - x, tz - z) < 1.9))
+        continue;
+      treeSpots.push([x, z]);
+
+      const roll = rand();
+      const kind = roll < 0.4 ? 'round' : roll < 0.8 ? 'pine' : 'blossom';
+      const root = new THREE.Group();
+      root.position.set(x, GROUND_Y, z);
+      root.rotation.y = rand() * Math.PI * 2;
+      root.add(buildTree(kind, 0.85 + rand() * 0.5));
+      scene.add(root);
+      trees.push({ root, phase: rand() * 6 });
+      pops.push({
+        o: root,
+        delay: 1.3 + rand() * 1.0, // muncul setelah Ward & gedung
+        dur: 0.55,
+        mode: 'uniform',
+        ease: easeBack,
+      });
+    }
+
+    const hallLabel = makeLabel('hall', 'Counting House · Tithe');
+    labelsEl.appendChild(hallLabel);
+
+    // Sorotan emas: gedung yang sedang di-hover (di prototipe: gedung terpilih).
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(
+        new THREE.BoxGeometry(2.5, 1, 2.5).translate(0, 0.5, 0),
+      ),
+      new THREE.LineBasicMaterial({ color: 0x2b3257 }),
+    );
+    outline.visible = false;
+    scene.add(outline);
+
+    // Koin: 3 terbang ke Counting House (tithe), sisanya melayang naik (holder).
+    const coinGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.1, 18);
+    coinGeo.rotateX(Math.PI / 2);
+    const coinMat = new THREE.MeshLambertMaterial({
+      color: 0xf7c93c,
+      emissive: 0xb07a00,
+      emissiveIntensity: 0.55,
+    });
+    const flying: FlyingCoin[] = [];
+    function spawnCoins(b: Building) {
+      const from = b.mesh.position.clone();
+      from.y += b.h + 0.8;
+      const hallTo = new THREE.Vector3(0, 5.6, 0);
+      const n = reduceMotion ? 1 : 7;
+      for (let i = 0; i < n; i++) {
+        const m = new THREE.Mesh(coinGeo, coinMat);
+        m.position.copy(from);
+        m.visible = false;
+        scene.add(m);
+        const toHall = i < 3;
+        const to = toHall
+          ? hallTo.clone()
+          : from
+              .clone()
+              .add(
+                new THREE.Vector3(
+                  (Math.random() - 0.5) * 4,
+                  4 + Math.random() * 2,
+                  (Math.random() - 0.5) * 4,
+                ),
+              );
+        flying.push({
+          m,
+          from: from.clone(),
+          to,
+          t: -i * 0.09,
+          dur: 1.3,
+          fade: !toHall,
+        });
+      }
+    }
+
+    // Interaksi: drag untuk orbit (dengan inersia), scroll untuk zoom, klik gedung -> profil.
+    const ray = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    let dragState: {
+      x: number;
+      y: number;
+      theta: number;
+      moved: number;
+      lastX: number;
+      lastT: number;
+    } | null = null;
+    let hoverId: string | null = null;
+
+    function hit(e: PointerEvent): string | null {
+      const r = cv.getBoundingClientRect();
+      ndc.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+      ndc.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+      ray.setFromCamera(ndc, camera);
+      const h = ray.intersectObjects(pickables)[0];
+      return h ? ((h.object as THREE.Mesh).userData.id as string) : null;
+    }
+
+    function onPointerDown(e: PointerEvent) {
+      dragState = {
+        x: e.clientX,
+        y: e.clientY,
+        theta,
+        moved: 0,
+        lastX: e.clientX,
+        lastT: performance.now(),
+      };
+      thetaVel = 0;
+      cv.setPointerCapture(e.pointerId);
+    }
+    function onPointerMove(e: PointerEvent) {
+      if (dragState) {
+        const dx = e.clientX - dragState.x;
+        dragState.moved = Math.max(
+          dragState.moved,
+          Math.abs(dx) + Math.abs(e.clientY - dragState.y),
+        );
+        theta = dragState.theta - dx * DRAG_RAD_PER_PX;
+        const now = performance.now();
+        const inst =
+          (-(e.clientX - dragState.lastX) * DRAG_RAD_PER_PX) /
+          Math.max((now - dragState.lastT) / 1000, 0.001);
+        thetaVel = 0.6 * inst + 0.4 * thetaVel;
+        dragState.lastX = e.clientX;
+        dragState.lastT = now;
+        if (dragState.moved >= 6) cv.style.cursor = 'grabbing';
+        placeCam();
+        return;
+      }
+      hoverId = hit(e);
+      cv.style.cursor = hoverId ? 'pointer' : 'grab';
+    }
+    function endDrag(e: PointerEvent, allowClick: boolean) {
+      if (!dragState) return;
+      const wasClick = dragState.moved < 6;
+      const stale = performance.now() - dragState.lastT > 80;
+      if (wasClick || stale || reduceMotion) thetaVel = 0;
+      dragState = null;
+      if (allowClick && wasClick) {
+        const id = hit(e);
+        if (id) router.push(`/agents/${id}`);
+      }
+      hoverId = hit(e);
+      cv.style.cursor = hoverId ? 'pointer' : 'grab';
+    }
+    const onPointerUp = (e: PointerEvent) => endDrag(e, true);
+    const onPointerCancel = (e: PointerEvent) => endDrag(e, false);
+    function onPointerLeave() {
+      if (!dragState) hoverId = null;
+    }
+    function onWheel(e: WheelEvent) {
+      e.preventDefault();
+      zoom = Math.min(2.6, Math.max(0.6, zoom * (e.deltaY > 0 ? 0.92 : 1.08)));
+      camera.zoom = zoom;
+      camera.updateProjectionMatrix();
+    }
+
+    cv.style.cursor = 'grab';
+    cv.addEventListener('pointerdown', onPointerDown);
+    cv.addEventListener('pointermove', onPointerMove);
+    cv.addEventListener('pointerup', onPointerUp);
+    cv.addEventListener('pointercancel', onPointerCancel);
+    cv.addEventListener('pointerleave', onPointerLeave);
+    cv.addEventListener('wheel', onWheel, { passive: false });
+
+    // Tombol ‹ › (dipanggil dari JSX di bawah): meluncur tepat ~45 derajat.
+    nudgeRef.current = (dir) => {
+      if (reduceMotion) {
+        theta -= dir * NUDGE_RAD;
+        placeCam();
+      } else {
+        thetaVel = (-dir * NUDGE_RAD) / INERTIA_S;
+      }
+    };
+
+    const v3 = new THREE.Vector3();
+    function project(pos: THREE.Vector3, el: HTMLDivElement) {
+      v3.copy(pos).project(camera);
+      el.style.left = ((v3.x + 1) / 2) * stage!.clientWidth + 'px';
+      el.style.top = ((1 - v3.y) / 2) * stage!.clientHeight + 'px';
+    }
+
+    const t0 = performance.now() / 1000;
+    let lastTime = performance.now();
+    let raf = 0;
+    const labelPos = new THREE.Vector3();
+
+    function frame(now: number) {
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+      const t = now / 1000;
+      const since = t - t0;
+      const grow = (delay: number, dur: number, ease: (k: number) => number) =>
+        reduceMotion ? 1 : ease(clamp01((since - delay) / dur));
+
+      if (!dragState && Math.abs(thetaVel) > 0.01) {
+        theta += thetaVel * dt;
+        thetaVel *= Math.exp(-dt / INERTIA_S);
+        placeCam();
+      }
+
+      // Data terbaru tiap frame -- perubahan status/revenue dari Realtime
+      // langsung terlihat tanpa membangun ulang scene.
+      const liveById = new Map(agentsRef.current.map((a) => [a.id, a]));
+
+      // Lantai, jalan, dan aula muncul bertahap.
+      pops.forEach((p) => {
+        const e =
+          p.ease === easeBack
+            ? grow(p.delay, p.dur, easeBack)
+            : grow(p.delay, p.dur, easeOut);
+        const s = Math.max(e, 0.001);
+        p.o.visible = e > 0.001;
+        if (p.mode === 'x') p.o.scale.set(s, 1, 1);
+        else p.o.scale.setScalar(s);
+      });
+
+      buildings.forEach((b) => {
+        const live = liveById.get(b.agentId);
+        if (live) {
+          b.status = live.status;
+          b.target = heightFor(live.revenue30d);
+          if (live.revenue30d > b.revenue + 0.5) spawnCoins(b); // wage cair -> koin terbang
+          b.revenue = live.revenue30d;
         }
-      : { 'aria-hidden': true as const }),
-  });
-  const hitClass =
-    'cursor-pointer outline-none transition-opacity hover:opacity-100 focus-visible:opacity-100';
 
-  // Painter's algorithm: yang paling jauh digambar duluan. Urutannya dihitung
-  // ulang tiap frame karena "jauh" berubah saat kota berputar.
-  const inBlock = (x: number, y: number) =>
-    x >= 0 && x <= wards.length * RW && y >= 0 && y <= RW;
-  const blockDep = v.dep((wards.length * RW) / 2, RW / 2);
-  const behind: Item[] = []; // di luar bangunan & di belakang dinding jauh
-  const front: Item[] = []; // di dalam ruangan, atau di luar tapi di depan
+        if (Math.abs(b.target - b.h) > 0.005) {
+          b.h += (b.target - b.h) * Math.min(1, dt * 3);
+          b.map.repeat.set(1, Math.max(1, Math.round(b.h * 0.9)));
+          b.emissiveMap.repeat.copy(b.map.repeat);
+        }
 
-  const deskDelay = (idx: number) => dl(0.6 + idx * 0.06);
-  placed.forEach(({ a, w, x, y }, idx) => {
-    const dim = !!focus && focus !== w;
-    front.push({
-      d: v.dep(x + 0.5, y + 0.3),
-      k: `d-${a.id}`,
-      delay: deskDelay(idx),
-      n: (
-        <g {...hitProps(a, true)} opacity={dim ? 0.35 : 1} className={hitClass}>
-          <title>{`$${a.ticker} · ${a.status}`}</title>
-          <Desk v={v} a={a} x={x} y={y} />
-        </g>
-      ),
-    });
-    front.push({
-      d: v.dep(x + 0.5, y + 0.95),
-      k: `p-${a.id}`,
-      delay: deskDelay(idx) + (intro ? 0.15 : 0),
-      n: (
-        <g
-          {...hitProps(a, false)}
-          opacity={dim ? 0.35 : 1}
-          className={hitClass}
-        >
-          <Person
-            v={v}
-            x={x + 0.5}
-            y={y + 0.95}
-            color={WARD_COLOR_HEX[a.district]}
-            status={a.status}
-            reduce={reduce}
-          />
-        </g>
-      ),
-    });
-  });
+        const rise = grow(b.delay, 0.7, easeOut); // gedung "tumbuh" dari tanah
+        const hovered = hoverId === b.agentId;
+        b.mesh.visible = rise > 0.001;
+        b.mesh.scale.set(
+          hovered ? 1.05 : 1,
+          Math.max(b.h * rise, 0.001),
+          hovered ? 1.05 : 1,
+        );
 
-  const addOutside = (
-    x: number,
-    y: number,
-    k: string,
-    delay: number,
-    n: ReactNode,
-  ) => {
-    const d = v.dep(x, y);
-    (!inBlock(x, y) && d < blockDep ? behind : front).push({ d, k, n, delay });
-  };
-  [...PLAZA_TREES, ...(floor === 'L2' ? TERRACE_TREES : [])].forEach(
-    ([x, y, s], i) =>
-      addOutside(
-        x,
-        y,
-        `t${i}`,
-        dl(0.5 + i * 0.06),
-        <Tree v={v} x={x} y={y} s={s} />,
-      ),
-  );
-  WALKERS.forEach(([x, y], i) =>
-    addOutside(
-      x,
-      y,
-      `w${i}`,
-      dl(1.0 + i * 0.1),
-      <Person v={v} x={x} y={y} color="#3b4058" reduce={reduce} />,
-    ),
-  );
-  behind.sort((a, b) => a.d - b.d);
-  front.sort((a, b) => a.d - b.d);
+        const want =
+          b.status === 'working'
+            ? 0.95 + (reduceMotion ? 0 : Math.sin(t * 3 + b.phase) * 0.15)
+            : b.status === 'review'
+              ? 0.6
+              : 0.05;
+        b.glow += (want - b.glow) * Math.min(1, dt * 4);
+        b.wallMaterial.emissiveIntensity = b.glow;
+
+        const top = b.mesh.position.y + b.h * rise;
+        const beaconPop = grow(b.delay + 0.5, 0.4, easeBack);
+        b.beacon.visible = b.status !== 'idle' && beaconPop > 0.001;
+        b.beacon.scale.setScalar(Math.max(beaconPop, 0.001));
+        if (b.status === 'review') {
+          b.beacon.material.color.set(0xf0b455);
+          b.beacon.material.emissive.set(0xf0b455);
+        } else {
+          const c = new THREE.Color(WARD_COLOR_HEX[b.district]);
+          b.beacon.material.color.copy(c);
+          b.beacon.material.emissive.copy(c);
+        }
+        b.beacon.position.set(
+          b.mesh.position.x,
+          top +
+            0.9 +
+            (reduceMotion
+              ? 0
+              : Math.sin(t * (b.status === 'review' ? 4 : 2) + b.phase) * 0.2),
+          b.mesh.position.z,
+        );
+        b.beacon.rotation.y += reduceMotion ? 0 : dt * 1.5;
+
+        labelPos.set(
+          b.mesh.position.x,
+          top + (b.status === 'idle' ? 0.6 : 1.9),
+          b.mesh.position.z,
+        );
+        project(labelPos, b.label);
+        b.label.style.opacity = String(grow(b.delay + 0.35, 0.35, easeOut));
+        highlightLabel(b.label, hovered);
+      });
+
+      const hb = hoverId ? buildings.get(hoverId) : undefined;
+      outline.visible = !!hb;
+      if (hb) {
+        outline.position.copy(hb.mesh.position);
+        outline.rotation.copy(hb.mesh.rotation);
+        outline.scale.set(1, hb.mesh.scale.y, 1);
+      }
+
+      for (let i = flying.length - 1; i >= 0; i--) {
+        const f = flying[i];
+        f.t += dt / f.dur;
+        const k = Math.max(0, Math.min(1, f.t));
+        f.m.position.lerpVectors(f.from, f.to, k);
+        f.m.position.y += Math.sin(k * Math.PI) * 3;
+        f.m.rotation.y += dt * 8;
+        f.m.visible = f.t > 0;
+        if (f.fade) f.m.scale.setScalar(1 - k * 0.8);
+        if (f.t >= 1) {
+          scene.remove(f.m);
+          flying.splice(i, 1);
+        }
+      }
+
+      if (!reduceMotion) {
+        trees.forEach((tr) => {
+          tr.root.rotation.z = Math.sin(t * 1.1 + tr.phase) * 0.035; // goyang tipis
+        });
+      }
+
+      hallCap.rotation.y += reduceMotion ? 0 : dt * 0.3;
+      distLabels.forEach((l) => {
+        project(l.pos, l.el);
+        l.el.style.opacity = String(grow(l.delay, 0.4, easeOut));
+      });
+      labelPos.set(0, 6.4, 0);
+      project(labelPos, hallLabel);
+      hallLabel.style.opacity = String(grow(0.6, 0.4, easeOut));
+
+      renderer.render(scene, camera);
+      raf = requestAnimationFrame(frame);
+    }
+
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(stage);
+    placeCam();
+    resize();
+    raf = requestAnimationFrame(frame);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      resizeObserver.disconnect();
+      nudgeRef.current = null;
+      cv.removeEventListener('pointerdown', onPointerDown);
+      cv.removeEventListener('pointermove', onPointerMove);
+      cv.removeEventListener('pointerup', onPointerUp);
+      cv.removeEventListener('pointercancel', onPointerCancel);
+      cv.removeEventListener('pointerleave', onPointerLeave);
+      cv.removeEventListener('wheel', onWheel);
+
+      // Bersihkan semua geometri, material, dan tekstur (termasuk koin yang masih terbang).
+      scene.traverse((o) => {
+        const obj = o as THREE.Mesh;
+        obj.geometry?.dispose();
+        const mats = Array.isArray(obj.material)
+          ? obj.material
+          : obj.material
+            ? [obj.material]
+            : [];
+        mats.forEach((m) => {
+          const mat = m as THREE.MeshLambertMaterial;
+          mat.map?.dispose();
+          mat.emissiveMap?.dispose();
+          mat.dispose();
+        });
+      });
+      trunkGeo.dispose();
+      blobGeo.dispose();
+      coneGeo.dispose();
+      coinGeo.dispose();
+      coinMat.dispose();
+      baseMap.dispose();
+      baseEmissive.dispose();
+      buildings.forEach((b) => b.label.remove());
+      distLabels.forEach((l) => l.el.remove());
+      hallLabel.remove();
+      renderer.dispose();
+      cv.remove();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- agentsRef dipakai untuk data live, scene dibangun sekali per mount
+  }, [router]);
 
   return (
-    <div className="grid gap-3 md:grid-cols-[210px_1fr]">
-      {/* Daftar Ward: klik = pindah lantai + sorot ruangan */}
-      <nav
-        aria-label="Wards"
-        className="flex flex-col gap-1 rounded-xl border border-line bg-surface p-2"
-      >
-        {DISTRICT_ORDER.map((d) => {
-          const list = byWard[d];
-          const busy = list.filter((a) => a.status === 'working').length;
-          const on = focus === d;
-          return (
-            <button
-              key={d}
-              type="button"
-              onClick={() => {
-                setFocus(on ? null : d);
-                if (!on) setFloor(floorOf(d));
-              }}
-              className={`flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors ${
-                on ? 'bg-surface-2' : 'hover:bg-surface-2/60'
-              }`}
-            >
-              <span
-                className="h-7 w-7 shrink-0 rounded-lg"
-                style={{ background: WARD_COLOR_HEX[d] }}
-              />
-              <span className="min-w-0">
-                <span className="block truncate text-[12.5px] font-semibold text-text">
-                  {WARD_LABEL[d]}
-                </span>
-                <span className="block text-[11px] text-muted">
-                  {list.length} Wright{busy > 0 ? ` · ${busy} working` : ''} ·{' '}
-                  {floorOf(d)}
-                </span>
-              </span>
-            </button>
-          );
-        })}
-      </nav>
+    <div
+      ref={stageRef}
+      className="relative h-full min-h-[420px] w-full overflow-hidden"
+      style={{
+        background:
+          'radial-gradient(120% 90% at 50% 40%, #fcfbf7 0%, #e6ebf2 75%)',
+      }}
+    >
+      <div ref={labelsRef} className="pointer-events-none absolute inset-0" />
 
-      <div
-        className={`relative touch-pan-y select-none overflow-hidden rounded-xl border border-line ${
-          grabbing ? 'cursor-grabbing' : 'cursor-grab'
-        }`}
-        style={{ background: 'linear-gradient(#f3f4f8,#e4e7ef)' }}
-        onPointerDown={(e) => {
-          if (e.pointerType === 'mouse' && e.button !== 0) return;
-          if ((e.target as Element).closest('button')) return; // tombol tidak memulai drag
-          suppressClick.current = false;
-          vel.current = 0;
-          drag.current = {
-            startX: e.clientX,
-            x: e.clientX,
-            t: performance.now(),
-            moved: false,
-          };
-          setGrabbing(true);
-        }}
-        onClickCapture={(e) => {
-          if (suppressClick.current) {
-            e.stopPropagation();
-            e.preventDefault();
-          }
-        }}
-      >
-        <div className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-full bg-white/90 px-3 py-1 text-[11px] font-semibold text-[#3b4058] shadow-sm">
-          <span className="h-2 w-2 rounded-full bg-[#3fbf7f]" />
-          {working}/{agents.length} working
-        </div>
+      <div className="pointer-events-none absolute left-3 top-2.5 z-10 flex max-w-[70%] flex-wrap gap-x-2.5 gap-y-1 rounded-xl bg-white/80 px-2.5 py-1.5 text-[11px] font-medium text-[#4a516d] shadow-sm">
+        {DISTRICT_ORDER.map((d) => (
+          <span key={d} className="inline-flex items-center gap-1.5">
+            <i
+              className="inline-block h-2 w-2 flex-none rounded-full"
+              style={{ background: WARD_COLOR_HEX[d] }}
+            />
+            {WARD_LABEL[d]}
+          </span>
+        ))}
+      </div>
 
-        <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-full bg-white/90 px-1 py-0.5 text-[11px] font-semibold text-[#3b4058] shadow-sm">
+      <div className="absolute right-3 top-2 z-10 flex items-center gap-1">
+        {([-1, 1] as const).map((dir) => (
           <button
+            key={dir}
             type="button"
-            onClick={() => nudge(-1)}
-            aria-label="Rotate left"
-            className="h-6 w-6 rounded-full text-[14px] leading-none hover:bg-[#eceef5]"
+            onClick={() => nudgeRef.current?.(dir)}
+            aria-label={dir === 1 ? 'Rotate right' : 'Rotate left'}
+            className="h-6 w-6 rounded-full bg-white/90 text-[14px] leading-none text-[#4a516d] shadow-sm transition-colors hover:bg-white hover:text-[#2b3257]"
           >
-            ‹
+            {dir === 1 ? '›' : '‹'}
           </button>
-          <button
-            type="button"
-            onClick={() => nudge(1)}
-            aria-label="Rotate right"
-            className="h-6 w-6 rounded-full text-[14px] leading-none hover:bg-[#eceef5]"
-          >
-            ›
-          </button>
-        </div>
-
-        <div className="absolute bottom-3 left-3 z-10 flex gap-3 rounded-full bg-white/90 px-3 py-1 text-[10.5px] text-[#4a516d] shadow-sm">
-          {(Object.keys(STATUS_COLOR) as AgentStatus[]).map((s) => (
-            <span key={s} className="flex items-center gap-1">
-              <span
-                className="h-2 w-2 rounded-full"
-                style={{ background: STATUS_COLOR[s] }}
-              />
-              {s}
-            </span>
-          ))}
-        </div>
-
-        <div className="absolute bottom-3 right-3 z-10 flex flex-col overflow-hidden rounded-lg bg-white/95 shadow-sm">
-          {(['L2', 'L1'] as Floor[]).map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFloor(f)}
-              aria-pressed={floor === f}
-              className={`h-8 w-9 text-[11px] font-bold ${floor === f ? 'bg-[#5b4fe0] text-white' : 'text-[#4a516d] hover:bg-[#eceef5]'}`}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-
-        <svg
-          viewBox="0 0 720 410"
-          className="block h-auto w-full"
-          role="img"
-          aria-label={`Wagehold city, floor ${floor}`}
-        >
-          <AnimatePresence mode="wait">
-            <motion.g
-              key={floor}
-              initial={false}
-              animate={{ opacity: 1 }}
-              exit={reduce ? undefined : { opacity: 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              <Pop delay={0} reduce={reduce} from={18}>
-                <Slab v={v} />
-              </Pop>
-              {wards.map((w, i) => (
-                <Pop key={w} delay={dl(0.15 + i * 0.12)} reduce={reduce}>
-                  <RoomFloor
-                    v={v}
-                    ward={w}
-                    index={i}
-                    dim={!!focus && focus !== w}
-                  />
-                </Pop>
-              ))}
-              {behind.map((it) => (
-                <Pop key={it.k} delay={it.delay} reduce={reduce}>
-                  {it.n}
-                </Pop>
-              ))}
-              {wards.map((w, i) => (
-                <Pop key={w} delay={dl(0.3 + i * 0.12)} reduce={reduce}>
-                  <RoomWalls
-                    v={v}
-                    ward={w}
-                    index={i}
-                    count={wards.length}
-                    dim={!!focus && focus !== w}
-                  />
-                </Pop>
-              ))}
-              {front.map((it) => (
-                <Pop key={it.k} delay={it.delay} reduce={reduce}>
-                  {it.n}
-                </Pop>
-              ))}
-
-              {/* Lapisan label: selalu di atas, tidak ikut terhalang objek lain */}
-              {placed.map(({ a, w, x, y }, idx) => {
-                const [tx, ty] = v.P(x + 0.5, y + 0.3);
-                return (
-                  <Pop
-                    key={`l-${a.id}`}
-                    delay={deskDelay(idx) + (intro ? 0.25 : 0)}
-                    reduce={reduce}
-                    from={4}
-                  >
-                    <text
-                      x={tx}
-                      y={ty + 15}
-                      textAnchor="middle"
-                      fontSize={7.5}
-                      fontWeight={700}
-                      fill="#4a516d"
-                      stroke="#f3f4f8"
-                      strokeWidth={2.5}
-                      strokeLinejoin="round"
-                      paintOrder="stroke"
-                      opacity={!!focus && focus !== w ? 0.35 : 1}
-                      pointerEvents="none"
-                    >
-                      ${a.ticker}
-                    </text>
-                  </Pop>
-                );
-              })}
-              {wards.map((w, i) => (
-                <Pop
-                  key={`rl-${w}`}
-                  delay={dl(0.9 + placed.length * 0.06 + i * 0.12)}
-                  reduce={reduce}
-                  from={10}
-                >
-                  <RoomLabel
-                    v={v}
-                    ward={w}
-                    index={i}
-                    dim={!!focus && focus !== w}
-                    extra={Math.max(0, byWard[w].length - MAX_DESKS)}
-                  />
-                </Pop>
-              ))}
-            </motion.g>
-          </AnimatePresence>
-        </svg>
+        ))}
       </div>
     </div>
   );

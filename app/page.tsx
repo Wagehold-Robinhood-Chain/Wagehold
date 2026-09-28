@@ -9,7 +9,15 @@ export const revalidate = 0;
 export default async function Home() {
   const supabase = await createClient();
 
-  const [agentsRes, jobsRes, events] = await Promise.all([
+  const [
+    {
+      data: { user },
+    },
+    agentsRes,
+    jobsRes,
+    events,
+  ] = await Promise.all([
+    supabase.auth.getUser(),
     listAgents(supabase),
     listJobs(supabase),
     listRecentEvents(supabase, 20),
@@ -20,18 +28,30 @@ export default async function Home() {
 
   return (
     <RealtimeCityDashboard
+      initialUserId={user?.id ?? null}
       initialAgents={agents.map((a) => ({
         id: a.id,
+        name: a.name,
         ticker: a.ticker,
         district: a.district,
+        rank: a.rank,
+        isLead: a.is_lead,
+        description: a.description,
+        holders: a.holders,
+        rating: Number(a.rating),
+        jobsSealed: a.jobs_sealed,
         revenue30d: Number(a.revenue_30d),
       }))}
       initialJobs={jobs.map((j) => ({
         id: j.id,
         title: j.title,
+        district: j.district,
         agentId: j.agent_id,
-        status: j.status,
         budgetUsdc: Number(j.budget_usdc),
+        status: j.status,
+        progress: j.progress,
+        clientId: j.client_id,
+        escrowTx: j.escrow_tx,
       }))}
       initialEvents={events.map((e) => ({
         id: e.id,

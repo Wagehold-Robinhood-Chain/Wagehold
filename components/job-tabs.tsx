@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import { motion } from "motion/react";
-import { cn } from "@/lib/cn";
+import { motion } from 'motion/react';
+import { cn } from '@/lib/cn';
 
 export interface JobTab {
   id: string;
@@ -22,7 +22,7 @@ export function JobTabs({
   return (
     <div
       role="tablist"
-      className="flex gap-0.5 overflow-x-auto border-b border-line px-2.5 pt-2"
+      className="flex flex-wrap gap-x-4 border-b border-line px-3.5 pt-2"
     >
       {tabs.map((t) => (
         <button
@@ -31,15 +31,15 @@ export function JobTabs({
           aria-selected={t.id === active}
           onClick={() => onChange(t.id)}
           className={cn(
-            "relative whitespace-nowrap border-b-2 border-transparent px-2 pb-[9px] pt-[7px] text-[12.5px] text-muted transition-colors hover:text-text",
-            t.id === active && "text-text"
+            'relative whitespace-nowrap border-b-2 border-transparent px-1 pb-[9px] pt-[7px] text-[12.5px] text-muted transition-colors hover:text-text',
+            t.id === active && 'text-text',
           )}
         >
           {t.label}
           <span
             className={cn(
-              "ml-1 font-mono text-[10.5px] text-faint",
-              t.alert && t.count > 0 && "text-warn"
+              'ml-1 font-mono text-[10.5px] text-faint',
+              t.alert && t.count > 0 && 'text-warn',
             )}
           >
             {t.count}
@@ -49,7 +49,7 @@ export function JobTabs({
             <motion.span
               layoutId="job-tab-underline"
               className="absolute inset-x-0 -bottom-0.5 h-0.5 bg-gold"
-              transition={{ type: "spring", stiffness: 500, damping: 40 }}
+              transition={{ type: 'spring', stiffness: 500, damping: 40 }}
             />
           )}
         </button>

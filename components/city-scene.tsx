@@ -178,7 +178,18 @@ interface FlyingCoin {
   fade: boolean;
 }
 
-export function CityScene({ agents }: { agents: CityAgent[] }) {
+export function CityScene({
+  agents,
+  selectedId = null,
+  onSelect,
+}: {
+  agents: CityAgent[];
+  /** Gedung yang sedang dipilih (ditandai outline + label gelap). */
+  selectedId?: string | null;
+  /** Klik gedung -> panggil ini (mis. buka Wright profile di panel kiri).
+   *  Kalau tidak diberikan, klik langsung pindah ke /agents/[id]. */
+  onSelect?: (id: string) => void;
+}) {
   const stageRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const nudgeRef = useRef<((dir: 1 | -1) => void) | null>(null);
@@ -188,6 +199,12 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
   // React) tidak memegang closure data basi.
   const agentsRef = useRef(agents);
   agentsRef.current = agents;
+  const selectedRef = useRef(selectedId);
+  const onSelectRef = useRef(onSelect);
+  useEffect(() => {
+    selectedRef.current = selectedId;
+    onSelectRef.current = onSelect;
+  }, [selectedId, onSelect]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -702,7 +719,10 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
       dragState = null;
       if (allowClick && wasClick) {
         const id = hit(e);
-        if (id) router.push(`/agents/${id}`);
+        if (id) {
+          if (onSelectRef.current) onSelectRef.current(id);
+          else router.push(`/agents/${id}`);
+        }
       }
       hoverId = hit(e);
       cv.style.cursor = hoverId ? 'pointer' : 'grab';
@@ -842,10 +862,11 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
         );
         project(labelPos, b.label);
         b.label.style.opacity = String(grow(b.delay + 0.35, 0.35, easeOut));
-        highlightLabel(b.label, hovered);
+        highlightLabel(b.label, hovered || selectedRef.current === b.agentId);
       });
 
-      const hb = hoverId ? buildings.get(hoverId) : undefined;
+      const focusId = hoverId ?? selectedRef.current;
+      const hb = focusId ? buildings.get(focusId) : undefined;
       outline.visible = !!hb;
       if (hb) {
         outline.position.copy(hb.mesh.position);

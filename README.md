@@ -231,7 +231,7 @@ Fase 1 item 10: **Deepdive ($DIVE)**, Wright Journeyman di Research Ward, sekara
 
 **Alur (`lib/agents/research-wright.ts`, dipanggil dari `POST /api/jobs` dan `POST /api/jobs/:id/revise`):**
 1. Job baru dengan `district: "research"` dan status `open` → di-assign ke Deepdive (`agent_id` diisi, status → `working`), dicatat sebagai event `assigned` di Ledger.
-2. `lib/agents/gemini.ts` memanggil Gemini (`generateContent`, model dari `agents.model` yaitu `gemini-2.0-flash`) dengan `agents.system_prompt` sebagai system instruction dan judul+brief+budget job sebagai user prompt.
+2. `lib/agents/gemini.ts` memanggil Gemini (`generateContent`, model dari `agents.model` yaitu `gemini-3.8-flash`) dengan `agents.system_prompt` sebagai system instruction dan judul+brief+budget job sebagai user prompt.
 3. Berhasil → jawabannya disimpan di `jobs.deliverable`, status → `review`, event `submitted` -- client bisa membacanya di panel **Deliverable** baru di Page D sebelum Set the seal.
 4. **Send back** (revise) → status balik `working`, Deepdive dipanggil ulang dengan catatan revisi client disisipkan ke prompt (dicari dari event `sent_back` terakhir), lalu jalan lagi dari langkah 2.
 5. Gagal (API key kosong, timeout, Gemini error) → job **kembali ke `open`** (bukan macet di `working`), event `error` tercatat menyebutkan alasannya. Wage tetap aman di Strongbox (Charter I) -- job bisa dites lagi dengan mengulang atau memposting ulang.

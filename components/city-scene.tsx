@@ -51,7 +51,7 @@ function windowCanvas(emissive: boolean) {
   const g = c.getContext('2d')!;
   g.fillStyle = emissive ? '#000' : '#ffffff';
   g.fillRect(0, 0, 64, 64);
-  g.fillStyle = emissive ? '#fff' : '#7c9cc8';
+  g.fillStyle = emissive ? '#fff' : '#3f78c8';
   [
     [8, 10],
     [36, 10],
@@ -65,6 +65,19 @@ function windowCanvas(emissive: boolean) {
 // elemennya dibuat lewat DOM API di luar React, jadi tidak ikut discan Tailwind.
 // Palet terang: pil putih untuk ticker, papan berwarna Ward untuk nama Ward.
 const INK = '#2b3257';
+
+// Naikkan saturasi & normalkan kecerahan supaya warna Ward terlihat hidup
+// (WARD_COLOR_HEX sengaja dibiarkan kalem karena dipakai juga di UI gelap).
+function vivid(color: THREE.ColorRepresentation, sat = 1.6, light = 0.56) {
+  const hsl = { h: 0, s: 0, l: 0 };
+  new THREE.Color(color).getHSL(hsl, THREE.SRGBColorSpace);
+  return new THREE.Color().setHSL(
+    hsl.h,
+    Math.min(1, hsl.s * sat),
+    light,
+    THREE.SRGBColorSpace,
+  );
+}
 type LabelKind = 'bld' | 'dist' | 'hall';
 function makeLabel(kind: LabelKind, text: string, color?: string) {
   const el = document.createElement('div');
@@ -93,9 +106,7 @@ function makeLabel(kind: LabelKind, text: string, color?: string) {
     s.textTransform = 'uppercase';
     s.padding = '3px 11px';
     s.borderRadius = '999px';
-    s.background = new THREE.Color(color ?? '#888888')
-      .multiplyScalar(0.9)
-      .getStyle();
+    s.background = vivid(color ?? '#888888', 1.6, 0.44).getStyle();
     s.boxShadow = '0 3px 8px rgba(43,50,87,.22)';
     s.color = '#fff';
   } else {
@@ -228,18 +239,18 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
     // Cahaya siang: langit putih + pantulan rumput, matahari hangat, dan fill
     // kebiruan dari sisi berlawanan supaya sisi gelap gedung tetap berwarna.
     // Intensitas x PI karena r155+ tidak lagi memakai "legacy lights".
-    scene.add(new THREE.HemisphereLight(0xffffff, 0xdde6cf, 0.6 * Math.PI));
-    const sun = new THREE.DirectionalLight(0xfff1d6, 0.45 * Math.PI);
+    scene.add(new THREE.HemisphereLight(0xdcecff, 0x8fd06a, 0.55 * Math.PI));
+    const sun = new THREE.DirectionalLight(0xffe7b8, 0.85 * Math.PI);
     sun.position.set(20, 40, 10);
     scene.add(sun);
-    const fill = new THREE.DirectionalLight(0xbfd3ff, 0.2 * Math.PI);
+    const fill = new THREE.DirectionalLight(0x9cbcff, 0.3 * Math.PI);
     fill.position.set(-20, 15, -20);
     scene.add(fill);
 
     const ground = new THREE.Mesh(new THREE.CylinderGeometry(22, 22, 0.6, 64), [
-      new THREE.MeshLambertMaterial({ color: 0xd9d1bf }), // sisi: lempeng beige
-      new THREE.MeshLambertMaterial({ color: 0x93c67f }), // atas: rumput segar
-      new THREE.MeshLambertMaterial({ color: 0xd9d1bf }),
+      new THREE.MeshLambertMaterial({ color: 0xc8b48a }), // sisi: lempeng tanah
+      new THREE.MeshLambertMaterial({ color: 0x5cc24a }), // atas: rumput segar
+      new THREE.MeshLambertMaterial({ color: 0xc8b48a }),
     ]);
     ground.position.y = -0.5;
     scene.add(ground);
@@ -255,16 +266,16 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
     const hall = new THREE.Group();
     const hallBase = new THREE.Mesh(
       new THREE.CylinderGeometry(3.2, 3.6, 1.2, 6),
-      new THREE.MeshLambertMaterial({ color: 0xe6dcc8 }),
+      new THREE.MeshLambertMaterial({ color: 0xf0d9a8 }),
     );
     hallBase.position.y = 0.6;
     hall.add(hallBase);
     const hallTower = new THREE.Mesh(
       new THREE.CylinderGeometry(1.9, 2.4, 3.2, 6),
       new THREE.MeshLambertMaterial({
-        color: 0xe8b64c,
-        emissive: 0x8a5f10,
-        emissiveIntensity: 0.3,
+        color: 0xffb020,
+        emissive: 0x9a5a00,
+        emissiveIntensity: 0.35,
       }),
     );
     hallTower.position.y = 2.8;
@@ -272,8 +283,8 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
     const hallCap = new THREE.Mesh(
       new THREE.ConeGeometry(2.1, 1.6, 6),
       new THREE.MeshLambertMaterial({
-        color: 0xf6cf5f,
-        emissive: 0xa77a12,
+        color: 0xffd23a,
+        emissive: 0xb07800,
         emissiveIntensity: 0.35,
       }),
     );
@@ -300,12 +311,12 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
       const ang = -Math.PI / 2 + (i * 2 * Math.PI) / DISTRICT_ORDER.length;
       const cx = Math.cos(ang) * RING_RADIUS;
       const cz = Math.sin(ang) * RING_RADIUS;
-      const col = new THREE.Color(WARD_COLOR_HEX[districtId]);
+      const col = vivid(WARD_COLOR_HEX[districtId]);
       const wardDelay = 0.6 + i * 0.24; // Ward muncul satu per satu
 
       const road = new THREE.Mesh(
         new THREE.BoxGeometry(RING_RADIUS - 6, 0.08, 1.3),
-        new THREE.MeshLambertMaterial({ color: 0xf3efe6 }),
+        new THREE.MeshLambertMaterial({ color: 0xe8dcc0 }),
       );
       road.position.set(
         Math.cos(ang) * (RING_RADIUS / 2 + 0.6),
@@ -322,7 +333,7 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
         ease: easeOut,
       });
 
-      const plateCol = col.clone().lerp(new THREE.Color(0xffffff), 0.72); // lantai pastel
+      const plateCol = col.clone().lerp(new THREE.Color(0xffffff), 0.5); // lantai berwarna
       const plate = new THREE.Mesh(
         new THREE.BoxGeometry(8.4, 0.5, 8.4),
         new THREE.MeshLambertMaterial({ color: plateCol }),
@@ -395,14 +406,14 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
         emissiveMap.wrapS = emissiveMap.wrapT = THREE.RepeatWrapping;
 
         const wallMaterial = new THREE.MeshLambertMaterial({
-          color: col.clone().lerp(new THREE.Color(0xffffff), 0.3),
+          color: col.clone().lerp(new THREE.Color(0xffffff), 0.08),
           map,
           emissive: new THREE.Color(0xffd58a),
           emissiveMap,
           emissiveIntensity: 0.05,
         });
         const roofMaterial = new THREE.MeshLambertMaterial({
-          color: col.clone().lerp(new THREE.Color(0xffffff), 0.62),
+          color: col.clone().lerp(new THREE.Color(0xffffff), 0.25),
         });
         const mesh = new THREE.Mesh(geo, [
           wallMaterial,
@@ -464,15 +475,15 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
     const blobGeo = new THREE.IcosahedronGeometry(1, 0);
     const coneGeo = new THREE.ConeGeometry(1, 1, 7);
     coneGeo.translate(0, 0.5, 0);
-    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x9a7b5a });
-    const leafMats = [0x6fb562, 0x82c46f, 0x5aa66a, 0x8fcb7a].map(
+    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x8a5a34 });
+    const leafMats = [0x3fb84a, 0x55c83f, 0x2fae62, 0x74d24a].map(
       (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true }),
     );
-    const pineMats = [0x4f9a6a, 0x5fa87a].map(
+    const pineMats = [0x1f9a55, 0x2fae68].map(
       (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true }),
     );
     const blossomMat = new THREE.MeshLambertMaterial({
-      color: 0xf3b6c4,
+      color: 0xff8fb3,
       flatShading: true,
     });
 
@@ -806,10 +817,10 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
         b.beacon.visible = b.status !== 'idle' && beaconPop > 0.001;
         b.beacon.scale.setScalar(Math.max(beaconPop, 0.001));
         if (b.status === 'review') {
-          b.beacon.material.color.set(0xf0b455);
-          b.beacon.material.emissive.set(0xf0b455);
+          b.beacon.material.color.set(0xffa726);
+          b.beacon.material.emissive.set(0xffa726);
         } else {
-          const c = new THREE.Color(WARD_COLOR_HEX[b.district]);
+          const c = vivid(WARD_COLOR_HEX[b.district]);
           b.beacon.material.color.copy(c);
           b.beacon.material.emissive.copy(c);
         }
@@ -931,7 +942,7 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
       className="relative h-full min-h-[420px] w-full overflow-hidden"
       style={{
         background:
-          'radial-gradient(120% 90% at 50% 40%, #fcfbf7 0%, #e6ebf2 75%)',
+          'radial-gradient(120% 90% at 50% 40%, #fff3d6 0%, #a9d8fb 78%)',
       }}
     >
       <div ref={labelsRef} className="pointer-events-none absolute inset-0" />
@@ -941,7 +952,7 @@ export function CityScene({ agents }: { agents: CityAgent[] }) {
           <span key={d} className="inline-flex items-center gap-1.5">
             <i
               className="inline-block h-2 w-2 flex-none rounded-full"
-              style={{ background: WARD_COLOR_HEX[d] }}
+              style={{ background: vivid(WARD_COLOR_HEX[d]).getStyle() }}
             />
             {WARD_LABEL[d]}
           </span>

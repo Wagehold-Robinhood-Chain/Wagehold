@@ -7,7 +7,7 @@
 // `lib/agents/claude.ts` senada dan tukar importnya di research-wright.ts --
 // pemanggil (research-wright.ts) tidak perlu berubah selain nama fungsi.
 
-const DEFAULT_MODEL = "gemini-2.0-flash";
+const DEFAULT_MODEL = "gemini-3.8-flash";
 const ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 export interface GeminiCallResult {
@@ -35,7 +35,9 @@ export async function callGemini(
     throw new Error("GEMINI_API_KEY is not set");
   }
 
-  const model = opts.model?.trim() || process.env.GEMINI_MODEL || DEFAULT_MODEL;
+  // Env var menang atas nilai di database (agents.model), supaya kalau Google
+  // menghentikan sebuah model cukup ganti GEMINI_MODEL di Vercel.
+  const model = process.env.GEMINI_MODEL?.trim() || opts.model?.trim() || DEFAULT_MODEL;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? 30_000);
 

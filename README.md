@@ -30,7 +30,7 @@ Buka `http://localhost:3000` — akan muncul kartu "Setup check" yang memverifik
    ```
    Ini akan menimpa `types/database.ts` (yang sekarang masih placeholder manual).
 4. Isi tabel `agents` dengan roster demo dari `wagehold-handoff.md` §7 (20 Wright, 5 Ward).
-5. **Aktifkan Email OTP / magic link**: di Supabase dashboard, buka **Authentication → Providers → Email** dan pastikan menyala (nyala secara default di project baru). Lalu di **Authentication → URL Configuration**, tambahkan `http://localhost:3000/auth/callback` (dan URL produksi nanti) ke **Redirect URLs** -- tanpa ini, link di email magic link akan ditolak Supabase saat `signInWithOtp` dipanggil dari `components/login-form.tsx`.
+5. **Aktifkan login Google & GitHub**: di Supabase dashboard, buka **Authentication → Providers**, nyalakan **Google** dan **GitHub**, lalu isi Client ID & Client Secret masing-masing (Google: console.cloud.google.com → APIs & Services → Credentials → OAuth client ID; GitHub: Settings → Developer settings → OAuth Apps). Di kedua provider, isi *Authorized redirect / callback URL* dengan URL callback yang ditampilkan Supabase (`https://<project-ref>.supabase.co/auth/v1/callback`). Lalu di **Authentication → URL Configuration**, tambahkan `http://localhost:3000/auth/callback` (dan URL produksi nanti) ke **Redirect URLs** -- tanpa ini, Supabase menolak `redirectTo` dari `components/login-form.tsx`.
 6. **Nyalakan Realtime**: jalankan `supabase/migrations/0004_realtime_ledger.sql` (setelah 0001-0003), atau toggle manual di **Database → Replication** untuk tabel `jobs`, `job_events`, `agents` -- lihat bagian **Realtime Ledger Wall** di bawah.
 
 ## Struktur folder
@@ -43,10 +43,10 @@ app/
     [id]/
       page.tsx           Page E — Wright Profile
   login/
-    page.tsx           Login (magic link)
+    page.tsx           Login (Google / GitHub OAuth)
   auth/
     callback/
-      route.ts           Menukar code magic link jadi sesi (PKCE)
+      route.ts           Menukar code OAuth jadi sesi (PKCE)
   jobs/
     page.tsx           Page B — Job Board
     new/
@@ -153,7 +153,7 @@ Logika query dipusatkan di `lib/supabase/queries.ts` supaya tidak duplikat antar
 
 `POST /api/jobs` dan `POST /api/jobs/:id/revise` sekarang juga memicu `runResearchJob()` (lihat **Research Ward (live agent)** di bawah) kalau job-nya `district: "research"` -- request-nya jadi lebih lambat beberapa detik (menunggu Gemini), tapi client langsung melihat hasilnya begitu redirect selesai.
 
-Route Handler yang butuh login memvalidasi `supabase.auth.getUser()` sendiri, tidak hanya mengandalkan `proxy.ts` (lihat catatan CVE-2025-29927 di file itu). Sejak halaman login dibangun (lihat bagian **Login (magic link)** di bawah), endpoint-endpoint ini bisa dites sungguhan dari browser, bukan cuma lewat client Supabase yang bawa sesi manual.
+Route Handler yang butuh login memvalidasi `supabase.auth.getUser()` sendiri, tidak hanya mengandalkan `proxy.ts` (lihat catatan CVE-2025-29927 di file itu). Sejak halaman login dibangun (lihat bagian **Login (Google / GitHub OAuth)** di bawah), endpoint-endpoint ini bisa dites sungguhan dari browser, bukan cuma lewat client Supabase yang bawa sesi manual.
 
 ## Data seed
 
@@ -182,7 +182,7 @@ Catatan versi Three.js: `renderer.outputEncoding` di prototipe (API lama) digant
 - **`components/job-card.tsx`** -- diperluas: kalau `isOwnJob` dan job `review`, muncul **Set the seal** / **Send back**. *Send back* sekarang minta catatan revisi dulu (textarea inline) sebelum dikonfirmasi, karena `POST /api/jobs/:id/revise` mewajibkan `note` (Charter IV: setiap aksi tercatat). Tombol nonaktif dan berganti teks selagi request jalan (`busy`), dan menampilkan pesan error kalau request gagal (mis. mencoba set the seal padahal bukan pemilik job).
 - Aksi seal memanggil `POST /api/jobs/:id/approve` atau `/revise` lewat `fetch`, lalu `router.refresh()` sebagai fallback -- tapi begitu Route Handler menulis ke `jobs`/`job_events`, tab ini (dan semua tab/device lain yang sedang membuka Job Board atau City Dashboard) sudah lebih dulu ter-update lewat Realtime (Item 11), bukan menunggu refresh itu.
 - **`components/site-nav.tsx`** -- nav kecil (*The City* / *Job Board*) ditambahkan ke header Page A dan Page B supaya kedua page saling terhubung.
-- `isOwnJob` sekarang sungguhan: begitu login (lihat bagian **Login (magic link)**), gerbang seal muncul untuk job milik sendiri. Sebelum login, job board tetap terlihat penuh tapi read-only, dengan link **Sign in** kecil di atas daftar job.
+- `isOwnJob` sekarang sungguhan: begitu login (lihat bagian **Login (Google / GitHub OAuth)**), gerbang seal muncul untuk job milik sendiri. Sebelum login, job board tetap terlihat penuh tapi read-only, dengan link **Sign in** kecil di atas daftar job.
 
 ## Page C — Post a Job
 
@@ -211,7 +211,7 @@ Catatan versi Three.js: `renderer.outputEncoding` di prototipe (API lama) digant
 - Tombol **Hire $TICKER** mengarah ke `/jobs/new?district=<ward-agent-ini>` -- belum meng-assign job langsung ke Wright itu (routing per-Wright masih tugas Warden, Fase 3), jadi baru mem-prefill Ward di form Post a Job.
 - **Tidak ada** token price / 14-hari sparkline seperti di panel profil prototipe -- `types/database.ts` tidak punya kolom harga atau tabel riwayat harga. Butuh tabel baru (mis. `agent_price_history`), ditunda sampai Fase 4 (tokenisasi agent).
 
-## Login (magic link)
+## Login (Google / GitHub OAuth)
 
 `app/login/page.tsx` + `components/login-form.tsx` -- form email saja, tanpa password. Memanggil `supabase.auth.signInWithOtp()` dari browser client (`lib/supabase/client.ts`), Supabase mengirim link ke email. Kalau sudah login, `/login` redirect ke `/`.
 

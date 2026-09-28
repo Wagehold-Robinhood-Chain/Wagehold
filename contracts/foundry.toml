@@ -1,0 +1,31 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+solc_version = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+gas_reports = ["*"]
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = true
+
+# Robinhood Chain (Fase 2 item 4) -- diisi begitu deploy sungguhan mulai dikerjakan.
+# RPC lewat Alchemy (penyedia yang direkomendasikan resmi oleh docs.robinhood.com/chain --
+# endpoint publik rpc.testnet.chain.robinhood.com dibatasi rate-limit, tidak untuk produksi).
+# Isi nilainya lewat contracts/.env (lihat .env.example), jangan hardcode di sini.
+[rpc_endpoints]
+robinhood_testnet = "${ROBINHOOD_TESTNET_RPC_URL}"
+robinhood_mainnet = "${ROBINHOOD_MAINNET_RPC_URL}"
+
+# Explorer Robinhood Chain berbasis Blockscout, bukan Etherscan -- config di bawah dipakai
+# forge kalau format API-nya cocok, tapi cara paling aman tetap
+# `forge verify-contract --verifier blockscout --verifier-url <url>/api` langsung saat deploy.
+[etherscan]
+robinhood_testnet = { key = "${ROBINHOOD_VERIFIER_KEY}", chain = 46630, url = "https://explorer.testnet.chain.robinhood.com/api" }
+robinhood_mainnet = { key = "${ROBINHOOD_VERIFIER_KEY}", chain = 4663, url = "https://robinhoodchain.blockscout.com/api" }

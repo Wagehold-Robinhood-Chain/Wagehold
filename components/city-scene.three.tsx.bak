@@ -1,0 +1,466 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import * as THREE from "three";
+import {
+  DISTRICT_ORDER,
+  WARD_COLOR_HEX,
+  WARD_LABEL,
+  type AgentStatus,
+  type DistrictId,
+} from "@/types/domain";
+
+export interface CityAgent {
+  id: string;
+  ticker: string;
+  district: DistrictId;
+  revenue30d: number;
+  status: AgentStatus;
+}
+
+// heightFor & offset layout sama persis dengan wagehold-prototype.html,
+// supaya proporsi kota tidak berubah saat diporting.
+const RING_RADIUS = 13.5;
+const BUILDING_OFFSETS: [number, number][] = [
+  [-1.9, -1.9],
+  [1.9, -1.9],
+  [-1.9, 1.9],
+  [1.9, 1.9],
+];
+const heightFor = (revenue30d: number) => 1.2 + revenue30d / 1500;
+
+function windowCanvas(emissive: boolean) {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  g.fillStyle = emissive ? "#000" : "#c9ccd8";
+  g.fillRect(0, 0, 64, 64);
+  g.fillStyle = emissive ? "#fff" : "#4a516d";
+  [
+    [8, 10],
+    [36, 10],
+    [8, 38],
+    [36, 38],
+  ].forEach(([x, y]) => g.fillRect(x, y, 20, 16));
+  return c;
+}
+
+interface Building {
+  agentId: string;
+  district: DistrictId;
+  mesh: THREE.Mesh;
+  wallMaterial: THREE.MeshLambertMaterial;
+  map: THREE.CanvasTexture;
+  emissiveMap: THREE.CanvasTexture;
+  beacon: THREE.Mesh<THREE.OctahedronGeometry, THREE.MeshLambertMaterial>;
+  label: HTMLDivElement;
+  h: number;
+  target: number;
+  phase: number;
+  glow: number;
+  status: AgentStatus;
+}
+
+export function CityScene({ agents }: { agents: CityAgent[] }) {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const labelsRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+
+  // Data terbaru selalu tersedia lewat ref supaya loop animasi (yang hidup
+  // di luar siklus render React) tidak memegang closure data basi.
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    const labelsEl = labelsRef.current;
+    if (!stage || !labelsEl) return;
+
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.outputColorSpace = THREE.SRGBColorSpace; // pengganti outputEncoding (deprecated sejak r152)
+    stage.insertBefore(renderer.domElement, labelsEl);
+
+    const scene = new THREE.Scene();
+    const S = 30;
+    const camera = new THREE.OrthographicCamera(-S, S, S, -S, -200, 400);
+    let theta = Math.PI / 4;
+    let zoom = 1;
+
+    function placeCam() {
+      const R = 60;
+      camera.position.set(R * Math.cos(theta), R * 0.82, R * Math.sin(theta));
+      camera.lookAt(0, 1.5, 0);
+    }
+
+    function resize() {
+      const w = stage!.clientWidth;
+      const h = stage!.clientHeight;
+      renderer.setSize(w, h, false);
+      const aspect = w / h;
+      const v = aspect < 1 ? 23 / aspect : 20;
+      camera.left = -v * aspect;
+      camera.right = v * aspect;
+      camera.top = v;
+      camera.bottom = -v;
+      camera.zoom = zoom;
+      camera.updateProjectionMatrix();
+    }
+
+    scene.add(new THREE.HemisphereLight(0xcfd6ff, 0x1a1d30, 0.75));
+    const sun = new THREE.DirectionalLight(0xfff1dc, 0.85);
+    sun.position.set(20, 40, 10);
+    scene.add(sun);
+    const fill = new THREE.DirectionalLight(0x8090ff, 0.25);
+    fill.position.set(-20, 15, -20);
+    scene.add(fill);
+
+    const ground = new THREE.Mesh(
+      new THREE.CylinderGeometry(22, 22, 0.6, 64),
+      new THREE.MeshLambertMaterial({ color: 0x161b31 })
+    );
+    ground.position.y = -0.5;
+    scene.add(ground);
+
+    const baseMap = new THREE.CanvasTexture(windowCanvas(false));
+    baseMap.colorSpace = THREE.SRGBColorSpace;
+    const baseEmissive = new THREE.CanvasTexture(windowCanvas(true));
+    baseEmissive.colorSpace = THREE.SRGBColorSpace;
+
+    // Counting House (Guild Hall)
+    const hall = new THREE.Group();
+    const hallBase = new THREE.Mesh(
+      new THREE.CylinderGeometry(3.2, 3.6, 1.2, 6),
+      new THREE.MeshLambertMaterial({ color: 0x3a3350 })
+    );
+    hallBase.position.y = 0.6;
+    hall.add(hallBase);
+    const hallTower = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.9, 2.4, 3.2, 6),
+      new THREE.MeshLambertMaterial({ color: 0xc9a54e, emissive: 0x5a4310, emissiveIntensity: 0.4 })
+    );
+    hallTower.position.y = 2.8;
+    hall.add(hallTower);
+    const hallCap = new THREE.Mesh(
+      new THREE.ConeGeometry(2.1, 1.6, 6),
+      new THREE.MeshLambertMaterial({ color: 0xe6c36a, emissive: 0x6b5010, emissiveIntensity: 0.5 })
+    );
+    hallCap.position.y = 5.2;
+    hall.add(hallCap);
+    scene.add(hall);
+
+    const buildings = new Map<string, Building>();
+    const pickables: THREE.Mesh[] = [];
+    const distLabels: { el: HTMLDivElement; pos: THREE.Vector3 }[] = [];
+
+    DISTRICT_ORDER.forEach((districtId, i) => {
+      const ang = -Math.PI / 2 + (i * 2 * Math.PI) / DISTRICT_ORDER.length;
+      const cx = Math.cos(ang) * RING_RADIUS;
+      const cz = Math.sin(ang) * RING_RADIUS;
+      const col = new THREE.Color(WARD_COLOR_HEX[districtId]);
+
+      const road = new THREE.Mesh(
+        new THREE.BoxGeometry(RING_RADIUS - 6, 0.08, 1.3),
+        new THREE.MeshLambertMaterial({ color: 0x2b3257 })
+      );
+      road.position.set(Math.cos(ang) * (RING_RADIUS / 2 + 0.6), 0.02, Math.sin(ang) * (RING_RADIUS / 2 + 0.6));
+      road.rotation.y = -ang;
+      scene.add(road);
+
+      const plateCol = col.clone().multiplyScalar(0.42);
+      const plate = new THREE.Mesh(
+        new THREE.BoxGeometry(8.4, 0.5, 8.4),
+        new THREE.MeshLambertMaterial({ color: plateCol })
+      );
+      plate.position.set(cx, 0.2, cz);
+      plate.rotation.y = -ang;
+      scene.add(plate);
+
+      const rim = new THREE.LineSegments(
+        new THREE.EdgesGeometry(plate.geometry),
+        new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.55 })
+      );
+      rim.position.copy(plate.position);
+      rim.rotation.copy(plate.rotation);
+      scene.add(rim);
+
+      const label = document.createElement("div");
+      label.className = "lbl dist";
+      label.style.color = WARD_COLOR_HEX[districtId];
+      label.textContent = WARD_LABEL[districtId];
+      labelsEl.appendChild(label);
+      distLabels.push({
+        el: label,
+        pos: new THREE.Vector3(Math.cos(ang) * (RING_RADIUS + 5.4), 0.4, Math.sin(ang) * (RING_RADIUS + 5.4)),
+      });
+
+      const members = agentsRef.current.filter((a) => a.district === districtId);
+      members.forEach((agent, k) => {
+        const offset = BUILDING_OFFSETS[k];
+        if (!offset) return; // lebih dari 4 Wright per Ward -- belum didukung layout ini
+        const [ox, oz] = offset;
+        const ca = Math.cos(-ang);
+        const sa = Math.sin(-ang);
+        const x = cx + ox * ca - oz * sa;
+        const z = cz + ox * sa + oz * ca;
+
+        const geo = new THREE.BoxGeometry(2.3, 1, 2.3);
+        geo.translate(0, 0.5, 0);
+        const map = baseMap.clone();
+        map.needsUpdate = true;
+        map.wrapS = map.wrapT = THREE.RepeatWrapping;
+        const emissiveMap = baseEmissive.clone();
+        emissiveMap.needsUpdate = true;
+        emissiveMap.wrapS = emissiveMap.wrapT = THREE.RepeatWrapping;
+
+        const wallMaterial = new THREE.MeshLambertMaterial({
+          color: col.clone().lerp(new THREE.Color(0xffffff), 0.12),
+          map,
+          emissive: new THREE.Color(0xffd58a),
+          emissiveMap,
+          emissiveIntensity: 0.05,
+        });
+        const roofMaterial = new THREE.MeshLambertMaterial({ color: col.clone().multiplyScalar(0.6) });
+        const mesh = new THREE.Mesh(geo, [
+          wallMaterial,
+          wallMaterial,
+          roofMaterial,
+          roofMaterial,
+          wallMaterial,
+          wallMaterial,
+        ]);
+        mesh.position.set(x, 0.45, z);
+        mesh.rotation.y = -ang;
+        mesh.userData.id = agent.id;
+        scene.add(mesh);
+        pickables.push(mesh);
+
+        const beacon = new THREE.Mesh(
+          new THREE.OctahedronGeometry(0.42),
+          new THREE.MeshLambertMaterial({ color: col, emissive: col, emissiveIntensity: 0.6 })
+        );
+        scene.add(beacon);
+
+        const buildingLabel = document.createElement("div");
+        buildingLabel.className = "lbl";
+        buildingLabel.textContent = "$" + agent.ticker;
+        labelsEl.appendChild(buildingLabel);
+
+        const h = heightFor(agent.revenue30d);
+        const building: Building = {
+          agentId: agent.id,
+          district: districtId,
+          mesh,
+          wallMaterial,
+          map,
+          emissiveMap,
+          beacon,
+          label: buildingLabel,
+          h,
+          target: h,
+          phase: Math.random() * 6,
+          glow: 0.05,
+          status: agent.status,
+        };
+        mesh.scale.y = h;
+        map.repeat.set(1, Math.max(1, Math.round(h * 0.9)));
+        emissiveMap.repeat.copy(map.repeat);
+        buildings.set(agent.id, building);
+      });
+    });
+
+    const hallLabel = document.createElement("div");
+    hallLabel.className = "lbl hall";
+    hallLabel.textContent = "Counting House · Tithe";
+    labelsEl.appendChild(hallLabel);
+
+    let selectedId: string | null = null;
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(2.5, 1, 2.5).translate(0, 0.5, 0)),
+      new THREE.LineBasicMaterial({ color: 0xe6c36a })
+    );
+    outline.visible = false;
+    scene.add(outline);
+
+    // Interaksi: drag untuk orbit, scroll untuk zoom, klik gedung -> profil.
+    const ray = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    const cv = renderer.domElement;
+    let dragState: { x: number; y: number; theta: number; moved: number } | null = null;
+    let hoverId: string | null = null;
+
+    function hit(e: PointerEvent): string | null {
+      const r = cv.getBoundingClientRect();
+      ndc.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+      ndc.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+      ray.setFromCamera(ndc, camera);
+      const h = ray.intersectObjects(pickables)[0];
+      return h ? ((h.object as THREE.Mesh).userData.id as string) : null;
+    }
+
+    function onPointerDown(e: PointerEvent) {
+      dragState = { x: e.clientX, y: e.clientY, theta, moved: 0 };
+      cv.setPointerCapture(e.pointerId);
+    }
+    function onPointerMove(e: PointerEvent) {
+      if (dragState) {
+        const dx = e.clientX - dragState.x;
+        dragState.moved = Math.max(dragState.moved, Math.abs(dx) + Math.abs(e.clientY - dragState.y));
+        theta = dragState.theta - dx * 0.008;
+        placeCam();
+        return;
+      }
+      hoverId = hit(e);
+      cv.style.cursor = hoverId ? "pointer" : "grab";
+    }
+    function onPointerUp(e: PointerEvent) {
+      if (dragState && dragState.moved < 6) {
+        const id = hit(e);
+        if (id) {
+          selectedId = id;
+          outline.visible = true;
+          router.push(`/agents/${id}`);
+        }
+      }
+      dragState = null;
+    }
+    function onWheel(e: WheelEvent) {
+      e.preventDefault();
+      zoom = Math.min(2.6, Math.max(0.6, zoom * (e.deltaY > 0 ? 0.92 : 1.08)));
+      camera.zoom = zoom;
+      camera.updateProjectionMatrix();
+    }
+
+    cv.addEventListener("pointerdown", onPointerDown);
+    cv.addEventListener("pointermove", onPointerMove);
+    cv.addEventListener("pointerup", onPointerUp);
+    cv.addEventListener("wheel", onWheel, { passive: false });
+
+    const v3 = new THREE.Vector3();
+    function project(pos: THREE.Vector3, el: HTMLDivElement) {
+      v3.copy(pos).project(camera);
+      const w = stage!.clientWidth;
+      const h = stage!.clientHeight;
+      el.style.left = ((v3.x + 1) / 2) * w + "px";
+      el.style.top = ((1 - v3.y) / 2) * h + "px";
+    }
+
+    let lastTime = performance.now();
+    let raf = 0;
+
+    function frame(now: number) {
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+      const t = now / 1000;
+
+      // Baca data terbaru tiap frame -- supaya perubahan status/revenue
+      // dari polling (bukan cuma snapshot saat mount) langsung terlihat
+      // tanpa perlu membangun ulang seluruh scene.
+      const liveById = new Map(agentsRef.current.map((a) => [a.id, a]));
+
+      buildings.forEach((b) => {
+        const live = liveById.get(b.agentId);
+        if (live) {
+          b.status = live.status;
+          b.target = heightFor(live.revenue30d);
+        }
+
+        if (Math.abs(b.target - b.h) > 0.005) {
+          b.h += (b.target - b.h) * Math.min(1, dt * 3);
+          b.mesh.scale.y = b.h;
+          b.map.repeat.set(1, Math.max(1, Math.round(b.h * 0.9)));
+          b.emissiveMap.repeat.copy(b.map.repeat);
+        }
+
+        const want =
+          b.status === "working"
+            ? 0.95 + (reduceMotion ? 0 : Math.sin(t * 3 + b.phase) * 0.15)
+            : b.status === "review"
+              ? 0.6
+              : 0.05;
+        b.glow += (want - b.glow) * Math.min(1, dt * 4);
+        b.wallMaterial.emissiveIntensity = b.glow;
+
+        const top = b.mesh.position.y + b.h;
+        b.beacon.visible = b.status !== "idle";
+        if (b.status === "review") {
+          b.beacon.material.color.set(0xf0b455);
+          b.beacon.material.emissive.set(0xf0b455);
+        } else {
+          const c = new THREE.Color(WARD_COLOR_HEX[b.district]);
+          b.beacon.material.color.copy(c);
+          b.beacon.material.emissive.copy(c);
+        }
+        b.beacon.position.set(
+          b.mesh.position.x,
+          top + 0.9 + (reduceMotion ? 0 : Math.sin(t * (b.status === "review" ? 4 : 2) + b.phase) * 0.2),
+          b.mesh.position.z
+        );
+        b.beacon.rotation.y += reduceMotion ? 0 : dt * 1.5;
+        b.mesh.scale.x = b.mesh.scale.z = hoverId === b.agentId ? 1.05 : 1;
+
+        v3.set(b.mesh.position.x, top + (b.status === "idle" ? 0.6 : 1.9), b.mesh.position.z);
+        project(v3.clone(), b.label);
+        b.label.classList.toggle("sel", b.agentId === selectedId);
+      });
+
+      const selected = selectedId ? buildings.get(selectedId) : undefined;
+      if (selected) {
+        outline.position.copy(selected.mesh.position);
+        outline.rotation.copy(selected.mesh.rotation);
+        outline.scale.set(1, selected.h, 1);
+      }
+
+      hallCap.rotation.y += reduceMotion ? 0 : dt * 0.3;
+      distLabels.forEach((l) => project(l.pos, l.el));
+      project(new THREE.Vector3(0, 6.4, 0), hallLabel);
+
+      renderer.render(scene, camera);
+      raf = requestAnimationFrame(frame);
+    }
+
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(stage);
+    placeCam();
+    resize();
+    raf = requestAnimationFrame(frame);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      resizeObserver.disconnect();
+      cv.removeEventListener("pointerdown", onPointerDown);
+      cv.removeEventListener("pointermove", onPointerMove);
+      cv.removeEventListener("pointerup", onPointerUp);
+      cv.removeEventListener("wheel", onWheel);
+
+      buildings.forEach((b) => {
+        b.mesh.geometry.dispose();
+        b.wallMaterial.dispose();
+        b.map.dispose();
+        b.emissiveMap.dispose();
+        b.beacon.geometry.dispose();
+        (b.beacon.material as THREE.Material).dispose();
+        b.label.remove();
+      });
+      distLabels.forEach((l) => l.el.remove());
+      hallLabel.remove();
+      baseMap.dispose();
+      baseEmissive.dispose();
+      renderer.dispose();
+      renderer.domElement.remove();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- agentsRef dipakai untuk data live, scene dibangun sekali per mount
+  }, [router]);
+
+  return (
+    <div ref={stageRef} className="relative h-full min-h-[420px] w-full overflow-hidden">
+      <div
+        ref={labelsRef}
+        className="pointer-events-none absolute inset-0 [&_.lbl]:absolute [&_.lbl]:-translate-x-1/2 [&_.lbl]:-translate-y-full [&_.lbl]:whitespace-nowrap [&_.lbl]:rounded-full [&_.lbl]:bg-bg/70 [&_.lbl]:px-1.5 [&_.lbl]:py-0.5 [&_.lbl]:font-mono [&_.lbl]:text-[10px] [&_.lbl]:text-muted [&_.lbl.sel]:text-gold [&_.lbl.dist]:bg-transparent [&_.lbl.dist]:text-[11px] [&_.lbl.dist]:font-semibold [&_.lbl.dist]:uppercase [&_.lbl.dist]:tracking-wider [&_.lbl.hall]:text-gold"
+      />
+    </div>
+  );
+}

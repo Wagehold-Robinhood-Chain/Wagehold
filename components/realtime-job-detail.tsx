@@ -1,0 +1,140 @@
+"use client";
+
+import { useState } from "react";
+import { JobDetail, type JobDetailEvent, type JobAgentInfo } from "@/components/job-detail";
+import { SiteNav } from "@/components/site-nav";
+import { AuthStatus } from "@/components/auth-status";
+import { WalletConnect } from "@/components/wallet-connect";
+import { useRealtimeChanges } from "@/lib/supabase/realtime";
+import { useCurrentUserId } from "@/lib/supabase/use-current-user-id";
+import type { DistrictId, JobStatus, JobSummary } from "@/types/domain";
+import { MotionPage, MotionHeader, MotionFooter } from "@/components/motion/primitives";
+
+/**
+ * Item 11 (Realtime Ledger Wall): halaman Job Detail sekarang mendengar
+ * baris job ini saja (`jobs`, filter `id=eq.<jobId>`) dan event-nya
+ * (`job_events`, filter `job_id=eq.<jobId>`) lewat Supabase Realtime.
+ * Ini yang langsung menjawab keluhan checklist Fase 1 item 11: client yang
+ * sedang membuka halaman job Research Ward-nya melihat status bergerak dari
+ * `open` -> `working` -> `review`, progress bar bergerak, dan panel
+ * Deliverable muncul begitu Deepdive selesai lewat Gemini -- tanpa refresh
+ * manual, walau prosesnya berjalan di request `POST /api/jobs` yang lain.
+ */
+export function RealtimeJobDetail({
+  jobId,
+  title,
+  district,
+  agentTicker,
+  budgetUsdc,
+  brief,
+  agent,
+  initialStatus,
+  initialProgress,
+  initialDeliverable,
+  escrowTx,
+  initialEvents,
+  clientId,
+  initialUserId,
+}: {
+  jobId: string;
+  title: string;
+  district: DistrictId;
+  agentTicker?: string;
+  budgetUsdc: number;
+  brief: string;
+  agent: JobAgentInfo | null;
+  initialStatus: JobStatus;
+  initialProgress: number;
+  initialDeliverable: string | null;
+  escrowTx: string | null;
+  initialEvents: JobDetailEvent[];
+  clientId: string;
+  initialUserId: string | null;
+}) {
+  const [status, setStatus] = useState(initialStatus);
+  const [progress, setProgress] = useState(initialProgress);
+  const [deliverable, setDeliverable] = useState(initialDeliverable);
+  const [events, setEvents] = useState(initialEvents);
+  const userId = useCurrentUserId(initialUserId);
+
+  useRealtimeChanges(
+    "jobs",
+    (payload) => {
+      if (payload.eventType === "DELETE") return;
+      const row = payload.new;
+      setStatus(row.status);
+      setProgress(row.progress);
+      setDeliverable(row.deliverable);
+    },
+    `id=eq.${jobId}`
+  );
+
+  useRealtimeChanges(
+    "job_events",
+    (payload) => {
+      if (payload.eventType !== "INSERT") return; // event tidak pernah di-update/dihapus
+      const row = payload.new;
+      setEvents((prev) => {
+        if (prev.some((e) => e.id === row.id)) return prev; // guard kalau event yang sama masuk dobel
+        return [
+          ...prev,
+          {
+            id: row.id,
+            actorLabel: row.actor,
+            text: row.note ?? row.type,
+            tx: row.tx,
+            // Diformat di browser -- baris ini tidak pernah ikut SSR
+            // (baru muncul lewat WebSocket), jadi tidak ada risiko
+            // hydration mismatch seperti events awal dari server.
+            atLabel: new Date(row.at).toLocaleString("en-US", {
+              dateStyle: "medium",
+              timeStyle: "short",
+            }),
+          },
+        ];
+      });
+    },
+    `job_id=eq.${jobId}`
+  );
+
+  const summary: JobSummary = {
+    id: jobId,
+    title,
+    district,
+    agentTicker,
+    budgetUsdc,
+    status,
+    progress,
+    escrowTx,
+  };
+
+  return (
+    <MotionPage className="flex h-screen flex-col gap-3 p-3">
+      <MotionHeader className="flex flex-wrap items-center gap-3">
+        <h1 className="font-display text-xl font-bold tracking-tight">Wagehold</h1>
+        <SiteNav />
+        <p className="text-[13px] italic text-muted">Work sealed. Wages shared.</p>
+        <AuthStatus />
+        <WalletConnect />
+      </MotionHeader>
+
+      <div className="flex flex-1 justify-center overflow-auto py-2">
+        <div className="w-full max-w-xl">
+          <JobDetail
+            job={summary}
+            brief={brief}
+            deliverable={deliverable}
+            agent={agent}
+            events={events}
+            isOwnJob={!!userId && clientId === userId}
+            signedIn={!!userId}
+          />
+        </div>
+      </div>
+
+      <MotionFooter className="text-center text-[11px] text-faint">
+        No coin leaves the Hold without a human seal.
+      </MotionFooter>
+    </MotionPage>
+  );
+}

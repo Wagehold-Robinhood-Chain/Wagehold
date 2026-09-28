@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/* Token warna & font ini diambil 1:1 dari wagehold-prototype.html (:root)
+   supaya port ke Next.js tidak mengubah identitas visual yang sudah ada.
+   Tailwind v4 pakai @theme, bukan tailwind.config.ts -- kelas seperti
+   bg-bg, text-gold, text-ward-research otomatis dihasilkan dari sini. */
+@theme {
+  --color-bg: #121626;
+  --color-surface: #1a1f33;
+  --color-surface-2: #222843;
+  --color-line: #2e3556;
+  --color-text: #e9e7f2;
+  --color-muted: #9aa1bd;
+  --color-faint: #6c7392;
+  --color-gold: #e6c36a;
+  --color-gold-ink: #241c06;
+  --color-good: #7cc79a;
+  --color-warn: #f0b455;
+  --color-crit: #e27070;
+
+  /* Warna per Ward, sesuai wagehold-lore.md Section 4 */
+  --color-ward-research: #5fb3b0;
+  --color-ward-onchain: #e0a458;
+  --color-ward-creative: #d9776b;
+  --color-ward-security: #9c8be0;
+  --color-ward-community: #8dbf7f;
+
+  --font-display: var(--font-display-family), "Avenir Next", system-ui, sans-serif;
+  --font-body: var(--font-body-family), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-mono-family), ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius-panel: 10px;
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  button,
+  input,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-gold);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,4 +1,4 @@
-import type { DistrictId, JobStatus, Rank } from "@/types/database";
+import type { DistrictId, JobStatus, Rank } from "@/types/enums";
 
 export type { DistrictId, JobStatus, Rank };
 

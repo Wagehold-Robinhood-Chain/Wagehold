@@ -5,7 +5,7 @@ import { runResearchJob } from "@/lib/agents/research-wright";
 import { verifyOnChainLock } from "@/lib/web3/verify-lock";
 import { isOnChainEscrowConfigured } from "@/lib/web3/strongbox";
 import { WARD_LABEL } from "@/types/domain";
-import type { JobStatus } from "@/types/database";
+import type { JobStatus } from "@/types/enums";
 
 // Deepdive (Gemini) berjalan di dalam request ini -- beri waktu cukup di Vercel.
 export const maxDuration = 60;

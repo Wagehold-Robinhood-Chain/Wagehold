@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database, JobStatus } from "@/types/database";
+import type { Database } from "@/types/database";
+import type { JobStatus } from "@/types/enums";
 
 type Client = SupabaseClient<Database>;
 

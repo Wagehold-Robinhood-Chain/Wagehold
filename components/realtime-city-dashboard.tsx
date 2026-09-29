@@ -13,10 +13,10 @@ import {
 import { JobBoard, type JobBoardItem } from '@/components/job-board';
 import { Panel, PanelHeader } from '@/components/ui/panel';
 import { SiteNav } from '@/components/site-nav';
-import { AuthStatus } from '@/components/auth-status';
 import { WalletConnect } from '@/components/wallet-connect';
 import { useRealtimeChanges } from '@/lib/supabase/realtime';
-import { useCurrentUserId } from '@/lib/supabase/use-current-user-id';
+import { useIdentity } from '@/lib/identity/use-identity';
+import { isWalletMode } from '@/lib/identity/mode';
 import { escapeHtml } from '@/lib/escape-html';
 import type {
   AgentDetail,
@@ -105,7 +105,7 @@ export function RealtimeCityDashboard({
   const [selectedId, setSelectedId] = useState<string | null>(
     initialAgents[0]?.id ?? null,
   );
-  const userId = useCurrentUserId(initialUserId);
+  const userId = useIdentity(initialUserId);
 
   useRealtimeChanges('job_events', (payload) => {
     if (payload.eventType !== 'INSERT') return; // event tidak pernah di-update/dihapus
@@ -267,9 +267,9 @@ export function RealtimeCityDashboard({
     return map;
   }, [agents]);
 
-  // Job Board (kolom kanan) -- gerbang seal (Article I): hanya client pemilik
-  // job yang melihat "Set the seal" / "Send back". Keputusan sesungguhnya tetap
-  // di server (Route Handler approve/revise), ini cuma memilih tombol yang tampil.
+  // Job Board (kolom kanan) -- gerbang seal (Article I): hanya pemilik job
+  // (wallet / browser) yang melihat "Set the seal" / "Send back". Keputusan sesungguhnya
+  // tetap di server (Route Handler approve/revise), ini cuma memilih tombol yang tampil.
   const boardItems: JobBoardItem[] = useMemo(
     () =>
       jobs.map((j) => ({
@@ -408,7 +408,6 @@ export function RealtimeCityDashboard({
             },
           ]}
         />
-        <AuthStatus />
         <WalletConnect />
       </MotionHeader>
 
@@ -459,7 +458,7 @@ export function RealtimeCityDashboard({
         </Panel>
 
         <div className="h-[520px] min-h-0 lg:h-full">
-          <JobBoard items={boardItems} signedIn={!!userId} />
+          <JobBoard items={boardItems} needsWallet={isWalletMode && !userId} />
         </div>
       </div>
 

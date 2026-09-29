@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { JobDetail, type JobDetailEvent, type JobAgentInfo } from "@/components/job-detail";
 import { SiteNav } from "@/components/site-nav";
-import { AuthStatus } from "@/components/auth-status";
 import { WalletConnect } from "@/components/wallet-connect";
 import { useRealtimeChanges } from "@/lib/supabase/realtime";
-import { useCurrentUserId } from "@/lib/supabase/use-current-user-id";
+import { useIdentity } from "@/lib/identity/use-identity";
+import { isWalletMode } from "@/lib/identity/mode";
 import type { DistrictId, JobStatus, JobSummary } from "@/types/domain";
 import { MotionPage, MotionHeader, MotionFooter } from "@/components/motion/primitives";
 
@@ -55,7 +55,7 @@ export function RealtimeJobDetail({
   const [progress, setProgress] = useState(initialProgress);
   const [deliverable, setDeliverable] = useState(initialDeliverable);
   const [events, setEvents] = useState(initialEvents);
-  const userId = useCurrentUserId(initialUserId);
+  const userId = useIdentity(initialUserId);
 
   useRealtimeChanges(
     "jobs",
@@ -114,7 +114,6 @@ export function RealtimeJobDetail({
         <h1 className="font-display text-xl font-bold tracking-tight">Wagehold</h1>
         <SiteNav />
         <p className="text-[13px] italic text-muted">Work sealed. Wages shared.</p>
-        <AuthStatus />
         <WalletConnect />
       </MotionHeader>
 
@@ -127,7 +126,7 @@ export function RealtimeJobDetail({
             agent={agent}
             events={events}
             isOwnJob={!!userId && clientId === userId}
-            signedIn={!!userId}
+            needsWallet={isWalletMode && !userId}
           />
         </div>
       </div>

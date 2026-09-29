@@ -1,15 +1,14 @@
 import { createPublicClient, http } from "viem";
-import { robinhoodTestnet } from "@/lib/web3/chains";
+import { activeChain } from "@/lib/web3/chains";
 
 /**
- * Shared server-side read client. Reads Robinhood Chain **testnet** only --
- * the app's `defaultNetwork` is `robinhoodTestnet` (see
- * `components/web3-provider.tsx`) and mainnet isn't live for Wagehold yet.
- * If mainnet is ever wired up, this needs to pick the chain per job instead
- * of assuming testnet. Used by `verify-lock.ts` (item 6) and `council.ts` /
- * `verify-release.ts` (item 7).
+ * Shared server-side read client. Chain-nya mengikuti
+ * NEXT_PUBLIC_WAGEHOLD_NETWORK (`activeChain`, default testnet) -- sama
+ * dengan `defaultNetwork` AppKit di `components/web3-provider.tsx`. Dipakai
+ * oleh `verify-lock.ts`, `council.ts`, `verify-release.ts`, dan
+ * `lib/identity/wallet-auth-server.ts` (verifikasi tanda tangan wallet).
  */
 export const publicClient = createPublicClient({
-  chain: robinhoodTestnet,
+  chain: activeChain,
   transport: http(),
 });

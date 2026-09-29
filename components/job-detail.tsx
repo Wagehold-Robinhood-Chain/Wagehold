@@ -10,8 +10,9 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Chip } from '@/components/ui/chip';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { RANK_LABEL } from '@/types/domain';
-import { robinhoodTestnet } from '@/lib/web3/chains';
-import { setTheSeal } from '@/lib/web3/set-the-seal';
+import { activeChain } from '@/lib/web3/chains';
+import { sendBack, setTheSeal } from '@/lib/web3/set-the-seal';
+import { ConnectWalletLink } from '@/components/wallet-connect';
 import type { JobSummary, Rank } from '@/types/domain';
 
 export interface JobDetailEvent {
@@ -92,7 +93,7 @@ export function JobDetail({
   agent,
   events,
   isOwnJob,
-  signedIn,
+  needsWallet,
 }: {
   job: JobSummary;
   brief: string;
@@ -103,7 +104,8 @@ export function JobDetail({
   agent: JobAgentInfo | null;
   events: JobDetailEvent[];
   isOwnJob: boolean;
-  signedIn: boolean;
+  /** true di mode wallet selama belum ada wallet terhubung. Selalu false di mode simulasi. */
+  needsWallet: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -128,14 +130,8 @@ export function JobDetail({
         );
       } else {
         const note =
-          typeof noteOrRating === 'string' ? noteOrRating : undefined;
-        const res = await fetch(`/api/jobs/${job.id}/${path}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: note !== undefined ? JSON.stringify({ note }) : undefined,
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error ?? 'Something went wrong');
+          typeof noteOrRating === 'string' ? noteOrRating : '';
+        await sendBack(job, note, setStep);
       }
       // Job dan Ledger di bawah sama-sama Server Component -- refresh
       // menarik ulang status, progress, dan event terbaru sekaligus.
@@ -177,15 +173,10 @@ export function JobDetail({
           onSendBack={(note) => callAction('revise', note)}
         />
 
-        {!signedIn && job.status === 'review' && (
+        {needsWallet && job.status === 'review' && (
           <p className="border-b border-line bg-surface-2 px-3.5 py-2 text-[11.5px] text-faint">
-            <Link
-              href="/login"
-              className="text-muted underline hover:text-text"
-            >
-              Sign in
-            </Link>{' '}
-            to set the seal on this job.
+            <ConnectWalletLink /> the wallet that posted this job to set the
+            seal.
           </p>
         )}
 
@@ -202,7 +193,7 @@ export function JobDetail({
               Escrow
             </h3>
             <a
-              href={`${robinhoodTestnet.blockExplorers.default.url}/tx/${job.escrowTx}`}
+              href={`${activeChain.blockExplorers.default.url}/tx/${job.escrowTx}`}
               target="_blank"
               rel="noopener noreferrer"
               className="w-fit font-mono text-[12px] text-muted underline hover:text-text"
@@ -260,7 +251,7 @@ export function JobDetail({
                     {e.text}
                     {e.tx && (
                       <a
-                        href={`${robinhoodTestnet.blockExplorers.default.url}/tx/${e.tx}`}
+                        href={`${activeChain.blockExplorers.default.url}/tx/${e.tx}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="ml-1.5 font-mono text-[10.5px] text-muted underline hover:text-text"

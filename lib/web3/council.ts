@@ -1,6 +1,6 @@
 import { createWalletClient, http, isAddress, isAddressEqual, zeroAddress, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { robinhoodTestnet } from "@/lib/web3/chains";
+import { activeChain } from "@/lib/web3/chains";
 import { publicClient } from "@/lib/web3/public-client";
 import { splitterAbi } from "@/lib/web3/splitter";
 import {
@@ -60,7 +60,7 @@ function getCouncil() {
   const account = privateKeyToAccount(normalized as `0x${string}`);
   const walletClient = createWalletClient({
     account,
-    chain: robinhoodTestnet,
+    chain: activeChain,
     transport: http(),
   });
   return { account, walletClient };

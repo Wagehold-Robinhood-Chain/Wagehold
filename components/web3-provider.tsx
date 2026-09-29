@@ -5,7 +5,7 @@ import { cookieToInitialState, WagmiProvider, type Config } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createAppKit } from "@reown/appkit/react";
 import { wagmiAdapter, projectId, isWeb3Configured, networks } from "@/lib/web3/config";
-import { robinhoodTestnet } from "@/lib/web3/chains";
+import { activeChain } from "@/lib/web3/chains";
 
 const queryClient = new QueryClient();
 
@@ -22,7 +22,7 @@ if (isWeb3Configured) {
     adapters: [wagmiAdapter],
     projectId: projectId!,
     networks: [...networks],
-    defaultNetwork: robinhoodTestnet,
+    defaultNetwork: activeChain,
     metadata: {
       name: "Wagehold",
       description: "A city of AI agents that do paid work, wages held in escrow until sealed.",

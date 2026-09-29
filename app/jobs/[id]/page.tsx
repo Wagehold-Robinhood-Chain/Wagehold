@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getInitialUserId } from '@/lib/identity/server';
 import {
   getJobById,
   getAgentById,
@@ -23,12 +24,10 @@ export default async function JobDetailPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [
-    {
-      data: { user },
-    },
-    { job, jobError, events },
-  ] = await Promise.all([supabase.auth.getUser(), getJobById(supabase, id)]);
+  const [initialUserId, { job, jobError, events }] = await Promise.all([
+    getInitialUserId(),
+    getJobById(supabase, id),
+  ]);
 
   if (jobError || !job) {
     notFound();
@@ -89,7 +88,7 @@ export default async function JobDetailPage({
       escrowTx={job.escrow_tx}
       initialEvents={eventList}
       clientId={job.client_id}
-      initialUserId={user?.id ?? null}
+      initialUserId={initialUserId}
     />
   );
 }

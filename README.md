@@ -30,7 +30,7 @@ Buka `http://localhost:3000` — akan muncul kartu "Setup check" yang memverifik
    ```
    Ini akan menimpa `types/database.ts` (yang sekarang masih placeholder manual).
 4. Isi tabel `agents` dengan roster demo dari `wagehold-handoff.md` §7 (20 Wright, 5 Ward).
-5. **Aktifkan login Google & GitHub**: di Supabase dashboard, buka **Authentication → Providers**, nyalakan **Google** dan **GitHub**, lalu isi Client ID & Client Secret masing-masing (Google: console.cloud.google.com → APIs & Services → Credentials → OAuth client ID; GitHub: Settings → Developer settings → OAuth Apps). Di kedua provider, isi *Authorized redirect / callback URL* dengan URL callback yang ditampilkan Supabase (`https://<project-ref>.supabase.co/auth/v1/callback`). Lalu di **Authentication → URL Configuration**, tambahkan `http://localhost:3000/auth/callback` (dan URL produksi nanti) ke **Redirect URLs** -- tanpa ini, Supabase menolak `redirectTo` dari `components/login-form.tsx`.
+5. **Tanpa login**: app tidak memakai Supabase Auth sama sekali (Provider Google/GitHub tidak perlu diaktifkan, `/login` dan `/auth/callback` sudah dihapus). Jalankan `supabase/migrations/0009_wallet_identity.sql` (setelah 0001-0008): mengubah `jobs.client_id` dari `uuid → auth.users` menjadi `text` supaya bisa berisi alamat wallet atau id browser. Lihat bagian **Identitas (tanpa login)** di bawah.
 6. **Nyalakan Realtime**: jalankan `supabase/migrations/0004_realtime_ledger.sql` (setelah 0001-0003), atau toggle manual di **Database → Replication** untuk tabel `jobs`, `job_events`, `agents` -- lihat bagian **Realtime Ledger Wall** di bawah.
 
 ## Struktur folder
@@ -42,11 +42,6 @@ app/
   agents/
     [id]/
       page.tsx           Page E — Wright Profile
-  login/
-    page.tsx           Login (Google / GitHub OAuth)
-  auth/
-    callback/
-      route.ts           Menukar code OAuth jadi sesi (PKCE)
   jobs/
     page.tsx           Page B — Job Board
     new/
@@ -61,7 +56,7 @@ components/
   ui/                Panel, Button, Badge, Chip, StatusPill, ProgressBar, EmptyState
   stat-bar.tsx, ledger-wall.tsx, job-tabs.tsx, job-card.tsx, job-board.tsx, job-detail.tsx,
   revenue-split.tsx, sparkline.tsx, post-job-form.tsx, post-job-client.tsx, site-nav.tsx,
-  agent-profile.tsx, auth-status.tsx, login-form.tsx
+  agent-profile.tsx, wallet-connect.tsx (identitas di header)
   realtime-city-dashboard.tsx  Page A penuh, live lewat Supabase Realtime (Item 11)
   realtime-job-board.tsx       Page B penuh, live lewat Supabase Realtime (Item 11)
   realtime-job-detail.tsx      Page D penuh, live lewat Supabase Realtime (Item 11)
@@ -106,7 +101,7 @@ Beberapa paket berubah cukup besar dari versi yang umum beredar di tutorial lama
 - **Tailwind v4**: config lewat CSS (`@theme` di `globals.css`), bukan file JS. PostCSS plugin-nya `@tailwindcss/postcss`, bukan `tailwindcss` + `autoprefixer`.
 - **Framer Motion → Motion**: nama paket npm sekarang `motion`, import dari `"motion/react"` (bukan `"framer-motion"`). Tim & fitur sama.
 - **@supabase/ssr**: pola cookie sekarang `getAll`/`setAll`, menggantikan `get`/`set`/`remove` yang lama.
-- **Proxy bukan lapis auth**: karena CVE-2025-29927, tiap Route Handler yang butuh user login memanggil `supabase.auth.getUser()` sendiri (lihat `lib/supabase/queries.ts` & catatan di `proxy.ts`), tidak cukup mengandalkan proxy saja.
+- **Proxy bukan lapis otorisasi**: karena CVE-2025-29927, `proxy.ts` hanya memberi cookie identitas browser (`wh_sim`). Tiap Route Handler yang mengubah job memeriksa kepemilikan sendiri lewat `authorizeJobOwner()` di `lib/identity/server.ts`.
 
 ## Komponen dasar
 
@@ -145,15 +140,15 @@ Tipe domain (`AgentSummary`, `JobSummary`, `LedgerEvent`, dst) ada di `types/dom
 | `GET /api/agents/:id` | Profil satu Wright | Publik |
 | `GET /api/jobs` | Daftar job, filter `?status=review,working` | Publik |
 | `GET /api/jobs/:id` | Detail job + timeline (`job_events`) | Publik |
-| `POST /api/jobs` | Post a job — mengunci wage (Article III) | Wajib login |
-| `POST /api/jobs/:id/approve` | Set the seal (Article I) — hanya client pemilik job | Wajib login |
-| `POST /api/jobs/:id/revise` | Send back, kembali ke status `working` | Wajib login |
+| `POST /api/jobs` | Post a job — mengunci wage (Article III) | Pemilik = browser (simulasi) / wallet pengunci wage (on-chain) |
+| `POST /api/jobs/:id/approve` | Set the seal (Article I) — hanya client pemilik job | Cookie browser (simulasi) / tanda tangan wallet (on-chain) |
+| `POST /api/jobs/:id/revise` | Send back, kembali ke status `working` | Cookie browser (simulasi) / tanda tangan wallet (on-chain) |
 
 Logika query dipusatkan di `lib/supabase/queries.ts` supaya tidak duplikat antar Route Handler. Payout (approve) masih **simulasi di database** — kredit 70% ke `agents.revenue_30d` — bukan transaksi atomik. Di Fase 2, ini digantikan `WageholdSplitter` on-chain sungguhan.
 
 `POST /api/jobs` dan `POST /api/jobs/:id/revise` sekarang juga memicu `runResearchJob()` (lihat **Research Ward (live agent)** di bawah) kalau job-nya `district: "research"` -- request-nya jadi lebih lambat beberapa detik (menunggu Gemini), tapi client langsung melihat hasilnya begitu redirect selesai.
 
-Route Handler yang butuh login memvalidasi `supabase.auth.getUser()` sendiri, tidak hanya mengandalkan `proxy.ts` (lihat catatan CVE-2025-29927 di file itu). Sejak halaman login dibangun (lihat bagian **Login (Google / GitHub OAuth)** di bawah), endpoint-endpoint ini bisa dites sungguhan dari browser, bukan cuma lewat client Supabase yang bawa sesi manual.
+Route Handler yang mengubah job memeriksa kepemilikan sendiri (`lib/identity/server.ts`), tidak hanya mengandalkan `proxy.ts` (lihat catatan CVE-2025-29927 di file itu). Detailnya ada di bagian **Identitas (tanpa login)** di bawah.
 
 ## Data seed
 
@@ -182,14 +177,14 @@ Catatan versi Three.js: `renderer.outputEncoding` di prototipe (API lama) digant
 - **`components/job-card.tsx`** -- diperluas: kalau `isOwnJob` dan job `review`, muncul **Set the seal** / **Send back**. *Send back* sekarang minta catatan revisi dulu (textarea inline) sebelum dikonfirmasi, karena `POST /api/jobs/:id/revise` mewajibkan `note` (Charter IV: setiap aksi tercatat). Tombol nonaktif dan berganti teks selagi request jalan (`busy`), dan menampilkan pesan error kalau request gagal (mis. mencoba set the seal padahal bukan pemilik job).
 - Aksi seal memanggil `POST /api/jobs/:id/approve` atau `/revise` lewat `fetch`, lalu `router.refresh()` sebagai fallback -- tapi begitu Route Handler menulis ke `jobs`/`job_events`, tab ini (dan semua tab/device lain yang sedang membuka Job Board atau City Dashboard) sudah lebih dulu ter-update lewat Realtime (Item 11), bukan menunggu refresh itu.
 - **`components/site-nav.tsx`** -- nav kecil (*The City* / *Job Board*) ditambahkan ke header Page A dan Page B supaya kedua page saling terhubung.
-- `isOwnJob` sekarang sungguhan: begitu login (lihat bagian **Login (Google / GitHub OAuth)**), gerbang seal muncul untuk job milik sendiri. Sebelum login, job board tetap terlihat penuh tapi read-only, dengan link **Sign in** kecil di atas daftar job.
+- `isOwnJob` dihitung dari identitas tanpa login (`useIdentity`): id browser di mode simulasi, alamat wallet yang terhubung di mode wallet (lihat **Identitas (tanpa login)**). Job board hanya menampilkan job milik sendiri; di mode wallet board kosong dan mengajak **Connect wallet** sampai wallet terhubung.
 
 ## Page C — Post a Job
 
 `app/jobs/new/page.tsx` (Server Component shell: header + nav + footer) merender `components/post-job-client.tsx` (Client Component) di dalam sebuah `Panel`, yang membungkus `PostJobForm` (sudah ada dari sebelumnya) dengan pemanggilan `POST /api/jobs`.
 
 - Berhasil → `router.push("/jobs")` + `router.refresh()`, jadi job baru langsung terlihat di tab *Open* Job Board.
-- Gagal → pesan error tampil di bawah form. Kalau belum login, Route Handler balik `"Sign in to post a job"` (401) -- errornya sekarang berisi link langsung ke `/login`.
+- Gagal → pesan error tampil di bawah form. Di mode simulasi tidak ada syarat login/wallet; di mode wallet, kalau wallet belum terhubung form menampilkan tautan **Connect your wallet**.
 - Panel diberi caption *"The Gate -- where clients enter to post jobs..."* mengikuti **clarity rule** di `wagehold-lore.md` §8: istilah lore (*The Gate*, *Strongbox*, *set the seal*) disandingkan dengan arti polosnya begitu pertama kali muncul di layar.
 - Tombol **Cancel** kembali ke `/jobs` (Job Board) tanpa submit.
 
@@ -201,7 +196,7 @@ Catatan versi Three.js: `renderer.outputEncoding` di prototipe (API lama) digant
 - `components/job-card.tsx` diperluas lagi: judul job sekarang jadi link ke `/jobs/[id]`, baik dari Job Board maupun City Dashboard.
 - Timeline awal diformat jadi string di server (`toLocaleString`) supaya tidak ada risiko hydration mismatch locale/timezone; event yang datang belakangan lewat Realtime diformat di browser (baris itu memang tidak pernah ikut SSR, jadi aman).
 - Sejak Item 11, `status`, `progress`, `deliverable`, dan Ledger job ini semua live lewat Supabase Realtime (filter `id=eq.<jobId>` / `job_id=eq.<jobId>`) -- klien yang membuka halaman job Research Ward-nya melihat Deepdive bergerak `open → working → review` tanpa refresh, meski prosesnya berjalan di request `POST /api/jobs` yang berbeda.
-- Sama seperti Page B: `isOwnJob` sekarang sungguhan begitu login -- gerbang seal bisa dites sungguhan.
+- Sama seperti Page B: `isOwnJob` mengikuti identitas browser (simulasi) atau wallet yang terhubung (on-chain).
 
 ## Page E — Wright Profile
 
@@ -211,14 +206,23 @@ Catatan versi Three.js: `renderer.outputEncoding` di prototipe (API lama) digant
 - Tombol **Hire $TICKER** mengarah ke `/jobs/new?district=<ward-agent-ini>` -- belum meng-assign job langsung ke Wright itu (routing per-Wright masih tugas Warden, Fase 3), jadi baru mem-prefill Ward di form Post a Job.
 - **Tidak ada** token price / 14-hari sparkline seperti di panel profil prototipe -- `types/database.ts` tidak punya kolom harga atau tabel riwayat harga. Butuh tabel baru (mis. `agent_price_history`), ditunda sampai Fase 4 (tokenisasi agent).
 
-## Login (Google / GitHub OAuth)
+## Identitas (tanpa login)
 
-`app/login/page.tsx` + `components/login-form.tsx` -- form email saja, tanpa password. Memanggil `supabase.auth.signInWithOtp()` dari browser client (`lib/supabase/client.ts`), Supabase mengirim link ke email. Kalau sudah login, `/login` redirect ke `/`.
+Tidak ada halaman login, magic link, atau Supabase Auth. Siapa "pemilik" sebuah job ditentukan oleh **mode**, yang dipilih otomatis dari env (`lib/identity/mode.ts`):
 
-- `app/auth/callback/route.ts` -- Route Handler yang menerima redirect dari link email (`?code=...`), menukarnya jadi sesi sungguhan lewat `supabase.auth.exchangeCodeForSession()` (PKCE), lalu redirect ke `next` (default `/`). Gagal (link kadaluarsa/sudah dipakai) → balik ke `/login?error=auth_failed` dengan pesan error di atas form.
-- **`components/auth-status.tsx`** -- dipasang di header semua 5 page. Client Component: cek sesi lewat `supabase.auth.getUser()` saat mount, lalu dengar `supabase.auth.onAuthStateChange()` supaya begitu magic link diklik atau tombol **Sign out** ditekan, statusnya (dan semua Server Component di halaman yang sama lewat `router.refresh()`) ikut ter-update tanpa reload manual. Belum login → link **Sign in**. Sudah login → email (disembunyikan di layar sempit) + tombol **Sign out**.
-- Semua pesan "login belum ada" di Page B/C/D sudah diganti jadi link langsung ke `/login`.
-- **Belum ada**: halaman profil/pengaturan akun, dan belum ada provider selain email magic link (mis. OAuth Google/GitHub) -- di luar scope item 9.
+| | Mode simulasi (default sekarang) | Mode wallet |
+|---|---|---|
+| Aktif kalau | `NEXT_PUBLIC_STRONGBOX_ADDRESS` / `NEXT_PUBLIC_WAGE_TOKEN_ADDRESS` kosong | keduanya terisi (jaringan: `NEXT_PUBLIC_WAGEHOLD_NETWORK=mainnet\|testnet`, kosong = testnet) |
+| Header | lencana *Simulation · this browser* + tombol Connect wallet nonaktif | tombol **Connect wallet** |
+| `jobs.client_id` | `sim:<hash>` dari cookie browser | alamat wallet (lowercase), dibaca dari `client` di Strongbox |
+| Post a job | langsung, wage hanya dicatat di database | wage dikunci on-chain dulu, server memverifikasi |
+| Set the seal / Send back | server mencocokkan cookie `wh_sim` browser pemanggil dengan pembuat job | wallet menandatangani pesan (tanpa dana bergerak); server memverifikasi tanda tangan = pemilik job. Set the seal tetap ditambah tx `approve()` on-chain |
+
+- **Cookie `wh_sim`**: `proxy.ts` memberi tiap browser UUID acak (httpOnly, 2 tahun). Yang disimpan publik di `jobs.client_id` hanya hash SHA-256-nya, jadi melihat `client_id` sebuah job tidak cukup untuk mengaku pemiliknya. Hapus cookie / ganti browser = job simulasi lama tidak bisa di-seal lagi (job tetap terlihat).
+- **Tanda tangan wallet** (`lib/identity/wallet-auth*.ts`): pesan memuat aksi, id job, detail (rating / hash catatan), dan waktu (berlaku 15 menit). Server membangun ulang pesan yang sama lalu memakai `publicClient.verifyMessage` (mendukung wallet kontrak juga).
+- **Rate limit** Post a job (10/jam) kini per pemilik (wallet atau browser), bukan per akun. Di mode simulasi bisa dilewati dengan menghapus cookie -- wajar untuk simulasi.
+- Job lama milik akun Supabase (uuid) tetap terbaca tapi tidak bisa di-seal lagi.
+- `components/wallet-connect.tsx` menggantikan `auth-status.tsx`; `lib/identity/use-identity.ts` menggantikan `useCurrentUserId`.
 
 ## Semua Ward (live agents + routing) -- Fase 1 item 10 & Fase 3 item 4-5
 
@@ -282,7 +286,7 @@ Wage dibayar dengan token **$WAGEHOLD**; simbolnya dipusatkan di `lib/currency.t
 
 ## Wallet connect (Fase 2 item 5)
 
-Tombol **Connect wallet** di header semua halaman (di sebelah Sign in/Sign out), memakai **Reown AppKit** (WalletConnect + wallet browser seperti MetaMask) di atas wagmi/viem.
+Tombol **Connect wallet** di header semua halaman (menggantikan Sign in/Sign out; di mode simulasi diganti lencana *Simulation* karena wallet belum diperlukan), memakai **Reown AppKit** (WalletConnect + wallet browser seperti MetaMask) di atas wagmi/viem.
 
 - `lib/web3/chains.ts` -- Robinhood Chain testnet (46630) & mainnet (4663) sebagai custom chain. RPC default endpoint publik; override lewat `NEXT_PUBLIC_ROBINHOOD_TESTNET_RPC_URL`/`..._MAINNET_RPC_URL` (mis. URL Alchemy, **domain-restrict dulu key-nya** karena `NEXT_PUBLIC_*` terlihat di browser).
 - `lib/web3/config.ts` -- `WagmiAdapter` (cookie storage + SSR), `isWeb3Configured`.

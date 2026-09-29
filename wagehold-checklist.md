@@ -22,7 +22,7 @@
 | 6 | Page C — Post a Job | ✅ Selesai |
 | 7 | Page D — Job Detail / Seal Gate | ✅ Selesai |
 | 8 | Page E — Wright Profile | ✅ Selesai |
-| 9 | Halaman login/auth client (dibutuhkan supaya `POST /api/jobs` dan gerbang seal bisa dites sungguhan dari browser) | ✅ Selesai *(sudah ada di file yang di-upload; diverifikasi sesi ini)* |
+| 9 | ~~Halaman login/auth client~~ **Digantikan:** login dihapus total. Identitas = wallet (mode on-chain) atau id browser lokal (mode simulasi); header punya **Connect wallet** sebagai gantinya. Lihat README → *Identitas (tanpa login)* dan migrasi `0009_wallet_identity.sql` | ✅ Diganti *(login dihapus, `POST /api/jobs` dan gerbang seal kini memakai cookie browser / tanda tangan wallet)* |
 | 10 | Hubungkan 1 agent Research Ward ke AI beneran (job beneran diproses, bukan simulasi) | ✅ Selesai *(pakai Gemini, bukan Claude API -- lihat catatan)* |
 | 11 | Realtime Ledger Wall (SSE/WebSocket, pengganti polling) | ✅ Selesai *(pakai Supabase Realtime/WebSocket, bukan SSE custom -- lihat catatan)* |
 

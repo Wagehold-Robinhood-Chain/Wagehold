@@ -5,25 +5,65 @@ import { useDisconnect } from "wagmi";
 import { Button } from "@/components/ui/button";
 import { SUPPORTED_CHAIN_IDS } from "@/lib/web3/chains";
 import { isWeb3Configured } from "@/lib/web3/config";
+import { isWalletMode } from "@/lib/identity/mode";
 
 function truncate(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
-/** Rendered instead of WalletConnectActive when NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID isn't
- *  set yet -- no Reown/wagmi hooks called here (unlike WalletConnectActive below), since
- *  those throw if the modal was never initialized (see web3-provider.tsx). Kept as a
- *  separate component rather than an early return inside WalletConnectActive so the hook
- *  calls below stay unconditional either way (rules-of-hooks). */
-function WalletConnectDisabled() {
+/** Rendered instead of WalletConnectActive when wallet connect can't be used -- no Reown/wagmi
+ *  hooks called here (unlike WalletConnectActive below), since those throw if the modal was
+ *  never initialized (see web3-provider.tsx). Kept as a separate component rather than an
+ *  early return inside WalletConnectActive so the hook calls below stay unconditional either
+ *  way (rules-of-hooks). */
+function WalletConnectDisabled({ reason }: { reason: string }) {
   return (
     <span
-      title="Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in .env.local (see .env.local.example) to enable wallet connect"
+      title={reason}
       className="cursor-not-allowed rounded-[7px] border border-line px-2.5 py-1 text-xs text-muted opacity-60"
     >
       Connect wallet
     </span>
   );
+}
+
+/** Mode simulasi (escrow on-chain belum dikonfigurasi): tidak ada login dan tidak
+ *  perlu wallet -- pemilik job = browser ini (lib/identity/sim-id.ts). */
+function SimulationBadge() {
+  return (
+    <span
+      title="Simulation mode: no wallet needed. Wages are recorded in the database only, and the jobs you post belong to this browser. Wallet connect turns on once on-chain escrow is configured (NEXT_PUBLIC_WAGEHOLD_NETWORK + NEXT_PUBLIC_STRONGBOX_ADDRESS + NEXT_PUBLIC_WAGE_TOKEN_ADDRESS)."
+      className="rounded-full border border-line bg-surface-2 px-2.5 py-1 text-[11px] text-muted"
+    >
+      Simulation · this browser
+    </span>
+  );
+}
+
+/** Tautan kecil "Connect wallet" di dalam teks (Job Board / Job Detail). Hook AppKit hanya
+ *  dipanggil di komponen terpisah yang dirender kalau AppKit memang diinisialisasi. */
+function ConnectWalletLinkActive() {
+  const { open } = useAppKit();
+  return (
+    <button
+      type="button"
+      onClick={() => open()}
+      className="text-muted underline hover:text-text"
+    >
+      Connect your wallet
+    </button>
+  );
+}
+
+export function ConnectWalletLink() {
+  if (!isWeb3Configured) {
+    return (
+      <span title="Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in .env.local to enable wallet connect">
+        Connect your wallet
+      </span>
+    );
+  }
+  return <ConnectWalletLinkActive />;
 }
 
 function WalletConnectActive() {
@@ -71,13 +111,30 @@ function WalletConnectActive() {
   );
 }
 
-/** Item 5 (Fase 2) -- Connect/disconnect a wallet via WalletConnect (or any injected wallet,
- *  Reown AppKit bundles both). Deliberately stops at connection state here: it does not yet
- *  read balances or send transactions -- that's Fase 2 item 6-7, once "Post a Job"/"Set the
- *  seal" actually call WageholdStrongbox/WageholdSplitter instead of the current database
- *  simulation. Placed next to AuthStatus in every page header (both concern "who is this
- *  session", just two different identities: Supabase email vs. on-chain wallet). */
+/** Identitas di header semua halaman -- menggantikan Sign in / Sign out (tidak ada login lagi).
+ *
+ *  - Mode wallet (escrow on-chain terkonfigurasi): tombol Connect wallet. Wallet inilah
+ *    "akun" -- pemilik job = alamat yang mengunci wage.
+ *  - Mode simulasi (default sekarang): lencana "Simulation" + tombol Connect wallet nonaktif.
+ *    Pemilik job = browser ini, tanpa wallet.
+ *
+ *  `ml-auto` di sini (dulu di AuthStatus) yang mendorong blok ini ke kanan header. */
 export function WalletConnect() {
-  if (!isWeb3Configured) return <WalletConnectDisabled />;
-  return <WalletConnectActive />;
+  let content: React.ReactNode;
+  if (!isWalletMode) {
+    content = (
+      <>
+        <SimulationBadge />
+        <WalletConnectDisabled reason="Simulation mode: no wallet needed. Wallet connect turns on once on-chain escrow (mainnet) is configured in .env.local." />
+      </>
+    );
+  } else if (!isWeb3Configured) {
+    content = (
+      <WalletConnectDisabled reason="Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in .env.local (see .env.local.example) to enable wallet connect" />
+    );
+  } else {
+    content = <WalletConnectActive />;
+  }
+
+  return <div className="ml-auto flex items-center gap-2">{content}</div>;
 }

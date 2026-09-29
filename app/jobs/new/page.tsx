@@ -2,7 +2,6 @@ import Link from "next/link";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { Button } from "@/components/ui/button";
 import { SiteNav } from "@/components/site-nav";
-import { AuthStatus } from "@/components/auth-status";
 import { WalletConnect } from "@/components/wallet-connect";
 import { PostJobClient } from "@/components/post-job-client";
 import { WARD_LABEL } from "@/types/domain";
@@ -29,7 +28,6 @@ export default async function PostJobPage({
         <h1 className="font-display text-xl font-bold tracking-tight">Wagehold</h1>
         <SiteNav />
         <p className="text-[13px] italic text-muted">Work sealed. Wages shared.</p>
-        <AuthStatus />
         <WalletConnect />
       </MotionHeader>
 

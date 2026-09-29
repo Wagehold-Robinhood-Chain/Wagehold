@@ -3,13 +3,9 @@
 import { WAGE_SYMBOL } from '@/lib/currency';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { AnimatePresence, motion } from 'motion/react';
-import {
-  useAppKit,
-  useAppKitAccount,
-  useAppKitNetwork,
-} from '@reown/appkit/react';
+import { useAccount } from 'wagmi';
+import { ConnectWalletLink } from '@/components/wallet-connect';
 import { PostJobForm, type PostJobValues } from '@/components/post-job-form';
 import { lockWageOnChain } from '@/lib/web3/lock-wage';
 import { isOnChainEscrowConfigured } from '@/lib/web3/strongbox';
@@ -30,7 +26,8 @@ interface PendingLock {
  *  POST /api/jobs, dan -- kalau escrow on-chain sudah dikonfigurasi
  *  (Fase 2 item 6) -- mengunci wage sungguhan di WageholdStrongbox lebih
  *  dulu lewat lib/web3/lock-wage.ts sebelum baris job pernah ditulis. Kalau
- *  belum dikonfigurasi, jatuh ke alur simulasi lama tanpa perubahan. */
+ *  belum dikonfigurasi, jatuh ke alur simulasi: tanpa login dan tanpa wallet --
+ *  job otomatis jadi milik browser ini (cookie `wh_sim`, lib/identity/sim-id.ts). */
 export function PostJobClient({
   initialDistrict,
 }: {
@@ -43,9 +40,9 @@ export function PostJobClient({
   const [needsWallet, setNeedsWallet] = useState(false);
   const [pendingLock, setPendingLock] = useState<PendingLock | null>(null);
 
-  const { open } = useAppKit();
-  const { address, isConnected } = useAppKitAccount();
-  const { chainId } = useAppKitNetwork();
+  // wagmi (bukan hook AppKit) supaya form ini tidak crash di mode simulasi kalau
+  // AppKit belum diinisialisasi (NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID kosong).
+  const { address, isConnected, chainId } = useAccount();
 
   async function handleSubmit(values: PostJobValues) {
     setSubmitting(true);
@@ -138,24 +135,9 @@ export function PostJobClient({
             className="border-t border-line px-3.5 py-2 text-[12.5px] text-crit"
           >
             {error}
-            {error === 'Sign in to post a job' && (
-              <span className="block text-faint">
-                <Link href="/login" className="underline hover:text-muted">
-                  Sign in
-                </Link>{' '}
-                first, then post the job again.
-              </span>
-            )}
             {needsWallet && (
               <span className="block text-faint">
-                <button
-                  type="button"
-                  onClick={() => open()}
-                  className="underline hover:text-muted"
-                >
-                  Connect wallet
-                </button>{' '}
-                first, then post the job again.
+                <ConnectWalletLink /> first, then post the job again.
               </span>
             )}
           </motion.p>

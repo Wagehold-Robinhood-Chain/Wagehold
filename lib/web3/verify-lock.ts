@@ -19,14 +19,15 @@ import {
  * Returns the wage amount **as read from the chain**, in wage-token units (human
  * units) -- the caller should use this instead of whatever `budgetUsdc` the
  * client sent in the request body, so a client can't claim a bigger wage
- * than what it actually locked.
+ * than what it actually locked. Also returns `client`, the (lowercase) wallet that
+ * locked it: that address becomes the job's owner (`jobs.client_id`).
  *
  * Throws (with a message safe to surface to the client) if escrow isn't
  * configured, the RPC call fails, or the job isn't in the expected state.
  */
 export async function verifyOnChainLock(
   jobUuid: string,
-): Promise<{ budgetUsdc: number }> {
+): Promise<{ budgetUsdc: number; client: string }> {
   if (!isOnChainEscrowConfigured || !strongboxAddress || !wageTokenAddress) {
     throw new Error('on-chain escrow is not configured on the server');
   }
@@ -56,5 +57,10 @@ export async function verifyOnChainLock(
     throw new Error('job has a zero amount on-chain');
   }
 
-  return { budgetUsdc: Number(formatUnits(job.amount, decimals)) };
+  return {
+    budgetUsdc: Number(formatUnits(job.amount, decimals)),
+    // Pemilik job = alamat yang benar-benar mengunci wage (dibaca dari chain,
+    // bukan dari body request) -- inilah pengganti user id Supabase.
+    client: job.client.toLowerCase(),
+  };
 }

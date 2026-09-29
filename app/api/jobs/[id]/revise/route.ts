@@ -2,6 +2,8 @@ import { NextResponse, after } from 'next/server';
 import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
 import { reviseJob } from '@/lib/supabase/queries';
 import { runWardJob } from '@/lib/agents/wright-runtime';
+import { authorizeJobOwner } from '@/lib/identity/server';
+import { reviseDetail } from '@/lib/identity/wallet-auth';
 
 // Wright yang mengerjakan ulang brief lewat Gemini berjalan di dalam
 // request ini -- beri waktu cukup di Vercel.
@@ -19,17 +21,6 @@ export async function POST(
   const { id } = await params;
   const supabase = await createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json(
-      { error: 'Sign in to send this job back' },
-      { status: 401 },
-    );
-  }
-
   const body = await request.json().catch(() => null);
   const note = typeof body?.note === 'string' ? body.note.trim() : '';
   if (!note) {
@@ -40,6 +31,29 @@ export async function POST(
       { error: `note must be at most ${MAX_NOTE_LENGTH} characters` },
       { status: 400 },
     );
+  }
+
+  const { data: jobRow } = await supabase
+    .from('jobs')
+    .select('client_id')
+    .eq('id', id)
+    .single();
+  if (!jobRow) {
+    return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+  }
+
+  // Article I: hanya pemilik job. Job simulasi -> cookie browser; job wallet ->
+  // tanda tangan wallet atas hash catatan ini.
+  const owner = await authorizeJobOwner({
+    clientId: jobRow.client_id,
+    action: 'revise',
+    jobId: id,
+    detail: reviseDetail(note),
+    auth: body?.auth,
+    verb: 'send it back',
+  });
+  if (!owner.ok) {
+    return NextResponse.json({ error: owner.error }, { status: owner.status });
   }
 
   const admin = createServiceRoleClient();
@@ -58,7 +72,7 @@ export async function POST(
     );
   }
 
-  const result = await reviseJob(supabase, admin, id, user.id, note);
+  const result = await reviseJob(supabase, admin, id, jobRow.client_id, note);
 
   if (result.error) {
     return NextResponse.json(

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isCouncilConfigured, preparePayeeOnChain } from "@/lib/web3/council";
 import { isOnChainEscrowConfigured } from "@/lib/web3/strongbox";
+import { authorizeJobOwner } from "@/lib/identity/server";
+import { sealDetail } from "@/lib/identity/wallet-auth";
 
 /**
  * Fase 2 item 7 -- step 1 of "Set the seal" for a job whose wage is locked
@@ -12,19 +14,11 @@ import { isOnChainEscrowConfigured } from "@/lib/web3/strongbox";
  * Wright assigned to this job), never from the request.
  */
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Sign in to set the seal" }, { status: 401 });
-  }
 
   const { data: job } = await supabase
     .from("jobs")
@@ -35,11 +29,22 @@ export async function POST(
   if (!job) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
-  if (job.client_id !== user.id) {
-    return NextResponse.json(
-      { error: "Only the client who posted this job can set the seal" },
-      { status: 403 }
-    );
+
+  // Tanpa login: pemilik dibuktikan lewat tanda tangan wallet (sama dengan yang
+  // nanti dikirim ke /approve -- rating ikut ditandatangani).
+  const body = await request.json().catch(() => null);
+  const rating =
+    typeof body?.rating === "number" && Number.isInteger(body.rating) ? body.rating : undefined;
+  const owner = await authorizeJobOwner({
+    clientId: job.client_id,
+    action: "seal",
+    jobId: id,
+    detail: sealDetail(rating),
+    auth: body?.auth,
+    verb: "set the seal",
+  });
+  if (!owner.ok) {
+    return NextResponse.json({ error: owner.error }, { status: owner.status });
   }
   if (job.status !== "review") {
     return NextResponse.json(

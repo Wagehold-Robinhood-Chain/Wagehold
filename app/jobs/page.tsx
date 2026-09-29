@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getInitialUserId } from '@/lib/identity/server';
 import { listJobs, listAgents } from '@/lib/supabase/queries';
 import { RealtimeJobBoard } from '@/components/realtime-job-board';
 
@@ -10,14 +11,13 @@ export const revalidate = 0;
 export default async function JobsPage() {
   const supabase = await createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  // Job Board bersifat per akun: hanya job milik user yang login. Belum
-  // login = board kosong (tidak ada job yang ditampilkan secara global).
+  // Job Board bersifat per pemilik. Mode simulasi: server tahu id browser ini
+  // (cookie) jadi cukup kirim job miliknya. Mode wallet: server tidak tahu wallet
+  // mana yang terhubung, jadi kirim semua job (data publik) dan browser yang
+  // menyaring lewat useIdentity -- board kosong sampai wallet connect.
+  const userId = await getInitialUserId();
   const [jobsRes, agentsRes] = await Promise.all([
-    user ? listJobs(supabase, undefined, user.id) : null,
+    listJobs(supabase, undefined, userId ?? undefined),
     listAgents(supabase),
   ]);
 
@@ -33,9 +33,8 @@ export default async function JobsPage() {
 
   return (
     <RealtimeJobBoard
-      // key = id user: ganti akun (sign in/out) -> board dibangun ulang dari
-      // data server milik akun itu, tidak membawa state akun sebelumnya.
-      key={user?.id ?? 'anon'}
+      // key = id browser (mode simulasi) -- board dibangun ulang kalau identitasnya berganti.
+      key={userId ?? 'wallet'}
       initialJobs={rows.map((j) => ({
         id: j.id,
         title: j.title,
@@ -48,7 +47,7 @@ export default async function JobsPage() {
         escrowTx: j.escrow_tx,
       }))}
       agentTickers={agentTickers}
-      initialUserId={user?.id ?? null}
+      initialUserId={userId}
     />
   );
 }

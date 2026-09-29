@@ -9,14 +9,15 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Button } from '@/components/ui/button';
 import { JobTabs, type JobTab } from '@/components/job-tabs';
 import { JobCard } from '@/components/job-card';
-import { setTheSeal } from '@/lib/web3/set-the-seal';
+import { sendBack, setTheSeal } from '@/lib/web3/set-the-seal';
+import { ConnectWalletLink } from '@/components/wallet-connect';
 import { itemVariants } from '@/components/motion/primitives';
 import type { Variants } from 'motion/react';
 import type { JobSummary } from '@/types/domain';
 
 export interface JobBoardItem {
   job: JobSummary;
-  /** true kalau client yang sedang login adalah pemilik job ini -- syarat gerbang seal */
+  /** true kalau identitas ini (wallet / browser) adalah pemilik job -- syarat gerbang seal */
   isOwnJob: boolean;
 }
 
@@ -48,15 +49,17 @@ const EMPTY_COPY: Record<TabId, string> = {
 
 export function JobBoard({
   items: allItems,
-  signedIn,
+  needsWallet,
 }: {
   items: JobBoardItem[];
-  signedIn: boolean;
+  /** true di mode wallet selama belum ada wallet terhubung -- board kosong
+   *  dan mengajak connect. Selalu false di mode simulasi. */
+  needsWallet: boolean;
 }) {
   const router = useRouter();
-  // Job Board per akun: hanya job milik user yang login. Filter di sini
+  // Job Board per pemilik: hanya job milik wallet / browser ini. Filter di sini
   // (bukan di pemanggil) supaya City Dashboard -- yang tetap butuh semua job
-  // untuk statistik kota -- juga hanya menampilkan job milik akunnya di panel ini.
+  // untuk statistik kota -- juga hanya menampilkan job milik sendiri di panel ini.
   const items = useMemo(() => allItems.filter((i) => i.isOwnJob), [allItems]);
   const [tab, setTab] = useState<TabId>('review');
   const [pending, setPending] = useState<Record<string, boolean>>({});
@@ -105,14 +108,10 @@ export function JobBoard({
         );
       } else {
         const note =
-          typeof noteOrRating === 'string' ? noteOrRating : undefined;
-        const res = await fetch(`/api/jobs/${jobId}/${path}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: note !== undefined ? JSON.stringify({ note }) : undefined,
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error ?? 'Something went wrong');
+          typeof noteOrRating === 'string' ? noteOrRating : '';
+        await sendBack(job, note, (label) =>
+          setSteps((s) => ({ ...s, [jobId]: label })),
+        );
       }
       // Refetch data server-side -- lebih sederhana daripada patch state lokal,
       // dan City Dashboard sudah pakai pola revalidate = 0 yang sama.
@@ -146,18 +145,15 @@ export function JobBoard({
         onChange={(id) => setTab(id as TabId)}
       />
 
-      {!signedIn && (
+      {needsWallet && (
         <p className="border-b border-line bg-surface-2 px-3.5 py-2 text-[11.5px] text-faint">
-          <Link href="/login" className="text-muted underline hover:text-text">
-            Sign in
-          </Link>{' '}
-          to see and manage your own jobs.
+          <ConnectWalletLink /> to see and manage your own jobs.
         </p>
       )}
 
       <PanelScroll>
-        {!signedIn ? (
-          <EmptyState>Sign in to see your jobs.</EmptyState>
+        {needsWallet ? (
+          <EmptyState>Connect your wallet to see your jobs.</EmptyState>
         ) : visible.length === 0 ? (
           <EmptyState>{EMPTY_COPY[tab]}</EmptyState>
         ) : (

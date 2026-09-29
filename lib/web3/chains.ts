@@ -57,8 +57,15 @@ export const robinhoodMainnet = defineChain({
   },
 });
 
+/** Jaringan yang dipakai app, dipilih lewat NEXT_PUBLIC_WAGEHOLD_NETWORK
+ *  ("mainnet" | "testnet"). Kosong/tidak dikenal -> testnet (perilaku lama, aman
+ *  untuk rehearsal). Dibaca oleh AppKit (defaultNetwork), public client server,
+ *  kunci council, dan link explorer -- satu sumber kebenaran. */
+export const activeChain =
+  process.env.NEXT_PUBLIC_WAGEHOLD_NETWORK === "mainnet" ? robinhoodMainnet : robinhoodTestnet;
+
 /** Dipakai di beberapa tempat (wallet-connect.tsx, lib/web3/lock-wage.ts,
  *  components/post-job-client.tsx) untuk mengecek jaringan wallet yang
- *  sedang aktif -- satu sumber kebenaran, bukan didefinisikan ulang di
- *  tiap file. */
-export const SUPPORTED_CHAIN_IDS = new Set<number>([robinhoodTestnet.id, robinhoodMainnet.id]);
+ *  sedang aktif. Hanya jaringan aktif yang diterima: kontrak Strongbox
+ *  ada di satu chain saja, wallet di chain lain pasti salah. */
+export const SUPPORTED_CHAIN_IDS = new Set<number>([activeChain.id]);

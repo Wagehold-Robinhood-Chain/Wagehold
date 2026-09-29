@@ -4,6 +4,8 @@ import { approveJob } from '@/lib/supabase/queries';
 import { isCouncilConfigured, splitAfterRelease } from '@/lib/web3/council';
 import { verifyReleased } from '@/lib/web3/verify-release';
 import { isOnChainEscrowConfigured } from '@/lib/web3/strongbox';
+import { authorizeJobOwner } from '@/lib/identity/server';
+import { sealDetail } from '@/lib/identity/wallet-auth';
 
 const TX_HASH_RE = /^0x[0-9a-f]{64}$/i;
 
@@ -27,30 +29,21 @@ export async function POST(
   const { id } = await params;
   const supabase = await createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json(
-      { error: 'Sign in to set the seal' },
-      { status: 401 },
-    );
-  }
-
   // Fase 2 item 7: job yang wage-nya terkunci on-chain (escrow_tx terisi)
   // tidak boleh ditandai 'paid' oleh database saja -- seal-nya harus sudah
   // terjadi di WageholdStrongbox (client memanggil approve() dari
-  // walletnya sendiri, Charter I). Kepemilikan dicek dulu sebelum
-  // menyentuh RPC.
+  // walletnya sendiri, Charter I).
   const { data: jobRow } = await supabase
     .from('jobs')
     .select('client_id, escrow_tx, agent_id')
     .eq('id', id)
     .single();
 
-  // Semua penulisan ke database lewat service role (0005_harden_rls.sql);
-  // kepemilikan & status sudah/akan dicek dengan client sesi user.
+  if (!jobRow) {
+    return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+  }
+
+  // Semua penulisan ke database lewat service role (0005_harden_rls.sql).
   const admin = createServiceRoleClient();
 
   let onChain: { sealTx?: string } | undefined;
@@ -64,20 +57,28 @@ export async function POST(
   }
 
   // Job yang dikerjakan Wright wajib di-rate sebelum seal.
-  if (jobRow?.agent_id && typeof rating !== 'number') {
+  if (jobRow.agent_id && typeof rating !== 'number') {
     return NextResponse.json(
       { error: 'Rate the Wright (1-5) before setting the seal' },
       { status: 400 },
     );
   }
 
-  if (jobRow?.escrow_tx) {
-    if (jobRow.client_id !== user.id) {
-      return NextResponse.json(
-        { error: 'Only the client who posted this job can set the seal' },
-        { status: 403 },
-      );
-    }
+  // Article I: hanya pemilik job. Tanpa login -- job simulasi dicocokkan ke cookie
+  // browser, job wallet ke tanda tangan wallet (rating ikut ditandatangani).
+  const owner = await authorizeJobOwner({
+    clientId: jobRow.client_id,
+    action: 'seal',
+    jobId: id,
+    detail: sealDetail(typeof rating === 'number' ? rating : undefined),
+    auth: body?.auth,
+    verb: 'set the seal',
+  });
+  if (!owner.ok) {
+    return NextResponse.json({ error: owner.error }, { status: owner.status });
+  }
+
+  if (jobRow.escrow_tx) {
     if (!isOnChainEscrowConfigured) {
       return NextResponse.json(
         {
@@ -116,7 +117,7 @@ export async function POST(
     supabase,
     admin,
     id,
-    user.id,
+    jobRow.client_id,
     onChain,
     typeof rating === 'number' ? rating : undefined,
   );

@@ -3,10 +3,10 @@
 import { useMemo, useState } from 'react';
 import { JobBoard, type JobBoardItem } from '@/components/job-board';
 import { SiteNav } from '@/components/site-nav';
-import { AuthStatus } from '@/components/auth-status';
 import { WalletConnect } from '@/components/wallet-connect';
 import { useRealtimeChanges } from '@/lib/supabase/realtime';
-import { useCurrentUserId } from '@/lib/supabase/use-current-user-id';
+import { useIdentity } from '@/lib/identity/use-identity';
+import { isWalletMode } from '@/lib/identity/mode';
 import type { DistrictId, JobStatus } from '@/types/domain';
 import {
   MotionPage,
@@ -37,9 +37,9 @@ interface RawJob {
  *
  * `agentTickers` diambil sekali di server (ticker Wright tidak pernah
  * berubah) supaya tidak perlu subscribe tabel `agents` juga di sini.
- * User id dilacak sendiri lewat `useCurrentUserId` (bukan cuma `signedIn`
- * dari server) supaya gerbang seal (`isOwnJob`) tetap benar begitu user
- * sign in/out tanpa bergantung pada urutan `router.refresh()`.
+ * Identitas ("saya") dilacak lewat `useIdentity`: alamat wallet yang terhubung
+ * di mode wallet, atau id browser dari server di mode simulasi -- tidak ada
+ * login. Gerbang seal (`isOwnJob`) ikut berubah begitu wallet connect/ganti.
  */
 export function RealtimeJobBoard({
   initialJobs,
@@ -51,14 +51,16 @@ export function RealtimeJobBoard({
   initialUserId: string | null;
 }) {
   const [jobs, setJobs] = useState(initialJobs);
-  const userId = useCurrentUserId(initialUserId);
+  const userId = useIdentity(initialUserId);
 
   useRealtimeChanges('jobs', (payload) => {
     if (payload.eventType === 'DELETE') return; // job tidak pernah dihapus lewat alur produk
     const row = payload.new;
-    // Job Board per akun: abaikan job milik client lain (tabel `jobs` publik,
-    // jadi Realtime tetap mengirim semua baris ke browser).
-    if (!userId || row.client_id !== userId) return;
+    // Job Board per pemilik: abaikan job milik orang lain (tabel `jobs` publik,
+    // jadi Realtime tetap mengirim semua baris ke browser). Selama identitas belum
+    // ada (wallet belum connect) baris tetap disimpan -- daftar difilter di `items`
+    // di bawah, jadi job milik wallet yang connect belakangan tidak terlewat.
+    if (userId && row.client_id !== userId) return;
     const next: RawJob = {
       id: row.id,
       title: row.title,
@@ -96,8 +98,8 @@ export function RealtimeJobBoard({
           },
           // Gerbang seal (Article I): hanya client pemilik job yang melihat
           // "Set the seal" / "Send back" -- keputusan sesungguhnya tetap di
-          // server (Route Handler approve/revise mengecek auth.getUser()
-          // sendiri), ini cuma menentukan tombol mana yang ditampilkan.
+          // server (Route Handler approve/revise memeriksa pemilik lewat
+          // lib/identity/server.ts), ini cuma menentukan tombol mana yang ditampilkan.
           isOwnJob: !!userId && j.clientId === userId,
         })),
     [jobs, agentTickers, userId],
@@ -113,12 +115,11 @@ export function RealtimeJobBoard({
         <p className="text-[13px] italic text-muted">
           Work sealed. Wages shared.
         </p>
-        <AuthStatus />
         <WalletConnect />
       </MotionHeader>
 
       <div className="min-h-0 flex-1">
-        <JobBoard items={items} signedIn={!!userId} />
+        <JobBoard items={items} needsWallet={isWalletMode && !userId} />
       </div>
 
       <MotionFooter className="text-center text-[11px] text-faint">

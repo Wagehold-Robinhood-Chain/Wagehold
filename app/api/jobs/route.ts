@@ -3,6 +3,7 @@ import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
 import { createJob, listJobs } from '@/lib/supabase/queries';
 import { runWardJob } from '@/lib/agents/wright-runtime';
 import { verifyOnChainLock } from '@/lib/web3/verify-lock';
+import { getSimClientId } from '@/lib/identity/server';
 import { isOnChainEscrowConfigured } from '@/lib/web3/strongbox';
 import { WARD_LABEL } from '@/types/domain';
 import type { JobStatus } from '@/types/enums';
@@ -64,21 +65,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-
-  // Article III Charter: hanya client yang sudah login yang boleh
-  // mengunci wage. Dicek di sini, bukan cuma mengandalkan proxy.ts.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json(
-      { error: 'Sign in to post a job' },
-      { status: 401 },
-    );
-  }
-
   const body = await request.json().catch(() => null);
   const title = typeof body?.title === 'string' ? body.title.trim() : '';
   const brief = typeof body?.brief === 'string' ? body.brief.trim() : '';
@@ -114,25 +100,8 @@ export async function POST(request: Request) {
     );
   }
 
-  // Semua penulisan lewat service role (0005_harden_rls.sql). Auth sudah dicek di atas.
+  // Semua penulisan lewat service role (0005_harden_rls.sql).
   const admin = createServiceRoleClient();
-
-  // Rate limit sederhana berbasis database (cocok untuk serverless, tanpa Redis):
-  // maksimal MAX_JOBS_PER_HOUR job baru per user per jam.
-  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const { count: recentJobs } = await admin
-    .from('jobs')
-    .select('id', { count: 'exact', head: true })
-    .eq('client_id', user.id)
-    .gte('created_at', since);
-  if ((recentJobs ?? 0) >= MAX_JOBS_PER_HOUR) {
-    return NextResponse.json(
-      {
-        error: `Too many jobs -- limit is ${MAX_JOBS_PER_HOUR} per hour. Try again later.`,
-      },
-      { status: 429 },
-    );
-  }
 
   // Kalau escrow on-chain sudah dikonfigurasi, alur simulasi ditutup: job tanpa
   // wage yang benar-benar terkunci tidak boleh masuk (kalau tidak, siapa pun bisa
@@ -147,6 +116,10 @@ export async function POST(request: Request) {
   let id: string | undefined;
   let escrowTx: string | undefined;
   let budgetUsdc: number = body.budgetUsdc;
+  // Pemilik job -- tanpa login, ditentukan dari salah satu dari dua sumber
+  // yang tidak bisa dipalsukan lewat body: alamat pengunci wage di chain
+  // (mode wallet) atau hash cookie httpOnly browser (mode simulasi).
+  let clientId: string | null = null;
 
   // Fase 2 item 6: kalau client mengirim `id` + `escrowTx`, itu berarti
   // lib/web3/lock-wage.ts (dipanggil dari post-job-client.tsx) sudah
@@ -176,6 +149,7 @@ export async function POST(request: Request) {
       // Otoritatif dari chain, bukan dari body -- lihat catatan di
       // verifyOnChainLock kenapa ini menggantikan body.budgetUsdc.
       budgetUsdc = verified.budgetUsdc;
+      clientId = verified.client;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'unknown error';
       return NextResponse.json(
@@ -185,14 +159,45 @@ export async function POST(request: Request) {
     }
   }
 
-  if (!escrowTx && budgetUsdc > MAX_SIMULATED_BUDGET_USDC) {
+  if (!escrowTx) {
+    // Alur simulasi: pemilik = browser ini.
+    clientId = await getSimClientId();
+    if (!clientId) {
+      return NextResponse.json(
+        { error: 'This browser has no identity yet -- reload the page and try again' },
+        { status: 400 },
+      );
+    }
+    if (budgetUsdc > MAX_SIMULATED_BUDGET_USDC) {
+      return NextResponse.json(
+        { error: `budgetUsdc must be at most ${MAX_SIMULATED_BUDGET_USDC}` },
+        { status: 400 },
+      );
+    }
+  }
+
+  if (!clientId) {
+    return NextResponse.json({ error: 'Could not determine the job owner' }, { status: 400 });
+  }
+
+  // Rate limit sederhana berbasis database (cocok untuk serverless, tanpa Redis):
+  // maksimal MAX_JOBS_PER_HOUR job baru per pemilik (wallet / browser) per jam.
+  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { count: recentJobs } = await admin
+    .from('jobs')
+    .select('id', { count: 'exact', head: true })
+    .eq('client_id', clientId)
+    .gte('created_at', since);
+  if ((recentJobs ?? 0) >= MAX_JOBS_PER_HOUR) {
     return NextResponse.json(
-      { error: `budgetUsdc must be at most ${MAX_SIMULATED_BUDGET_USDC}` },
-      { status: 400 },
+      {
+        error: `Too many jobs -- limit is ${MAX_JOBS_PER_HOUR} per hour. Try again later.`,
+      },
+      { status: 429 },
     );
   }
 
-  const { data, error } = await createJob(admin, user.id, {
+  const { data, error } = await createJob(admin, clientId, {
     id,
     title,
     brief,

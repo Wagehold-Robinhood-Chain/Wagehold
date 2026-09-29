@@ -14,6 +14,8 @@ import {
   writeContract,
 } from 'wagmi/actions';
 import { wagmiConfig } from '@/lib/web3/config';
+import { signWalletAuth } from '@/lib/identity/wallet-auth-client';
+import { reviseDetail, sealDetail, type WalletAuth } from '@/lib/identity/wallet-auth';
 import { SUPPORTED_CHAIN_IDS } from '@/lib/web3/chains';
 import {
   computeJobId,
@@ -158,11 +160,14 @@ async function postJson(
  * Job Detail.
  *
  * - Job with an on-chain escrow (`escrowTx` set, escrow configured):
+ *   0. wallet signs a message (no login/session exists -- this proves the caller
+ *      owns the job; the rating is part of what is signed);
  *   1. `POST /seal/prepare` -- server wires the payee on-chain (council key);
  *   2. wallet sends `approve(jobId)` -- the actual release;
  *   3. `POST /approve` with the tx hash -- server re-reads the chain, only then
  *      marks the job `paid`.
- * - Any other job (simulated escrow): the old one-step `POST /approve`.
+ * - Any other job (simulated escrow): the old one-step `POST /approve`; the server
+ *   recognises the owner from this browser's identity cookie.
  *
  * `onStep` receives a short label for the button while each step runs.
  * Throws with a message safe to show to the user.
@@ -176,10 +181,17 @@ export async function setTheSeal(
 ): Promise<void> {
   const onChain = !!job.escrowTx && isOnChainEscrowConfigured;
   let sealTx: string | undefined;
+  let auth: WalletAuth | undefined;
 
   if (onChain) {
+    onStep?.('Sign the request in your wallet…');
+    auth = await signWalletAuth('seal', job.id, sealDetail(rating));
+
     onStep?.('Preparing the payee…');
-    const prep = await postJson(`/api/jobs/${job.id}/seal/prepare`);
+    const prep = await postJson(`/api/jobs/${job.id}/seal/prepare`, {
+      rating,
+      auth,
+    });
 
     if (prep.state !== 'already_released') {
       onStep?.('Confirm in your wallet…');
@@ -190,12 +202,33 @@ export async function setTheSeal(
     onStep?.('Recording the seal…');
   }
 
-  const body: { sealTx?: string; rating?: number } = {};
+  const body: { sealTx?: string; rating?: number; auth?: WalletAuth } = {};
   if (sealTx) body.sealTx = sealTx;
   if (rating !== undefined) body.rating = rating;
+  if (auth) body.auth = auth;
 
   await postJson(
     `/api/jobs/${job.id}/approve`,
     Object.keys(body).length > 0 ? body : undefined,
   );
+}
+
+/**
+ * "Send back" (revise). Job wallet butuh tanda tangan wallet pemilik (tidak ada
+ * sesi login); job simulasi cukup cookie browser yang dibawa otomatis.
+ */
+export async function sendBack(
+  job: { id: string; escrowTx?: string | null },
+  note: string,
+  onStep?: (label: string) => void,
+): Promise<void> {
+  const body: { note: string; auth?: WalletAuth } = { note };
+
+  if (job.escrowTx) {
+    onStep?.('Sign the request in your wallet…');
+    body.auth = await signWalletAuth('revise', job.id, reviseDetail(note));
+    onStep?.('Sending back…');
+  }
+
+  await postJson(`/api/jobs/${job.id}/revise`, body);
 }

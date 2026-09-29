@@ -88,11 +88,11 @@ permanen di Splitter itu. Hanya untuk Anvil lokal / deploy sekali-pakai.
 
 Sisa yang tidak bisa diverifikasi tanpa browser + wallet + Supabase; lakukan sekali setelah A lulus:
 
-1. Supabase: jalankan migrasi 0001–0004; aktifkan Email OTP + Redirect URL `/auth/callback`.
+1. Supabase: jalankan migrasi 0001–0009 (0009 = identitas tanpa login).
 2. `.env.local`: Supabase, `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` (Reown), `NEXT_PUBLIC_STRONGBOX_ADDRESS`,
    `NEXT_PUBLIC_WAGE_TOKEN_ADDRESS`, `COUNCIL_PRIVATE_KEY`, `WAGEHOLD_SPLITTER_ADDRESS`,
    `WAGEHOLD_PATRON_POOL_ADDRESS` (seed belum mengisi `agents.wallet`), `GEMINI_API_KEY`.
-3. `npm run dev`, login (magic link), **Connect wallet**, pindah ke Robinhood Chain testnet.
+3. `npm run dev` (isi `NEXT_PUBLIC_WAGEHOLD_NETWORK=testnet`), **Connect wallet**, pindah ke Robinhood Chain testnet. Tidak ada login.
 4. Post a Job → dua tanda tangan (approve token + `createJob`); cek panel Escrow ada link tx, dan
    `budget_usdc` di DB = nominal on-chain.
 5. Tunggu Deepdive mengerjakan (`review`), klik **Set the seal** → dua langkah (prepare di server, `approve`

@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getInitialUserId } from '@/lib/identity/server';
 import { listAgents, listJobs, listRecentEvents } from '@/lib/supabase/queries';
 import { RealtimeCityDashboard } from '@/components/realtime-city-dashboard';
 
@@ -9,15 +10,8 @@ export const revalidate = 0;
 export default async function Home() {
   const supabase = await createClient();
 
-  const [
-    {
-      data: { user },
-    },
-    agentsRes,
-    jobsRes,
-    events,
-  ] = await Promise.all([
-    supabase.auth.getUser(),
+  const [initialUserId, agentsRes, jobsRes, events] = await Promise.all([
+    getInitialUserId(),
     listAgents(supabase),
     listJobs(supabase),
     listRecentEvents(supabase, 20),
@@ -28,7 +22,7 @@ export default async function Home() {
 
   return (
     <RealtimeCityDashboard
-      initialUserId={user?.id ?? null}
+      initialUserId={initialUserId}
       initialAgents={agents.map((a) => ({
         id: a.id,
         name: a.name,

@@ -1,43 +1,31 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { SIM_COOKIE, isValidSimSecret } from "@/lib/identity/sim-id";
 
-// Next.js 16 mengganti nama middleware.ts -> proxy.ts (fungsi: proxy,
-// bukan middleware). Perilaku sama persis, hanya nama yang berubah.
+// Next.js 16 mengganti nama middleware.ts -> proxy.ts (fungsi: proxy).
 //
-// PENTING (CVE-2025-29927): proxy/middleware TIDAK boleh jadi satu-satunya
-// lapis auth -- request bisa melewatinya lewat manipulasi header tertentu.
-// Fungsi ini HANYA me-refresh sesi (supaya token expired diperbarui sebelum
-// Server Component / Route Handler membacanya). Setiap Route Handler yang
-// butuh user login (POST /api/jobs, approve, revise) tetap WAJIB memanggil
-// supabase.auth.getUser() sendiri sebelum memproses -- lihat lib/supabase/queries.ts.
-export async function proxy(request: NextRequest) {
-  let response = NextResponse.next({
-    request: { headers: request.headers },
+// Tidak ada login lagi. Satu-satunya tugas proxy ini: memastikan setiap browser
+// punya cookie httpOnly `wh_sim` (UUID acak) -- identitas browser untuk MODE
+// SIMULASI (lihat lib/identity/sim-id.ts). Cookie juga dimasukkan ke request yang
+// sedang berjalan supaya Server Component / Route Handler di request pertama
+// sudah bisa membacanya.
+//
+// PENTING (CVE-2025-29927): proxy TIDAK boleh jadi lapis otorisasi. Kepemilikan
+// job dicek ulang di tiap Route Handler lewat lib/identity/server.ts.
+export function proxy(request: NextRequest) {
+  if (isValidSimSecret(request.cookies.get(SIM_COOKIE)?.value)) {
+    return NextResponse.next();
+  }
+
+  const secret = crypto.randomUUID();
+  request.cookies.set(SIM_COOKIE, secret);
+  const response = NextResponse.next({ request: { headers: request.headers } });
+  response.cookies.set(SIM_COOKIE, secret, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365 * 2,
   });
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => {
-            request.cookies.set(name, value);
-          });
-          response = NextResponse.next({ request: { headers: request.headers } });
-          cookiesToSet.forEach(({ name, value, options }) => {
-            response.cookies.set(name, value, options);
-          });
-        },
-      },
-    }
-  );
-
-  await supabase.auth.getUser();
-
   return response;
 }
 

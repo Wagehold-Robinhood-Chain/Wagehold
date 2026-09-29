@@ -13,7 +13,6 @@ import {
 } from '@/lib/supabase/queries';
 import { AgentProfile } from '@/components/agent-profile';
 import { SiteNav } from '@/components/site-nav';
-import { AuthStatus } from '@/components/auth-status';
 import { WalletConnect } from '@/components/wallet-connect';
 import type { AgentDetail, AgentStatus, JobSummary } from '@/types/domain';
 import {
@@ -135,7 +134,6 @@ export default async function AgentProfilePage({
         <p className="text-[13px] italic text-muted">
           Work sealed. Wages shared.
         </p>
-        <AuthStatus />
         <WalletConnect />
       </MotionHeader>
 

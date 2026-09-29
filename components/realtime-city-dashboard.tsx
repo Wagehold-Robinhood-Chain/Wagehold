@@ -197,11 +197,11 @@ export function RealtimeCityDashboard({
     return map;
   }, [agents, jobs]);
 
-  // Statistik per Ward -- dipakai untuk profil Warden saja. Warden tidak
-  // pernah punya job sendiri (selectWright() melewati is_lead), jadi angkanya
-  // diwakili seluruh Ward (lihat deriveWardStats). Sengaja TIDAK dipakai untuk
-  // tinggi gedung di kota (cityAgents di bawah tetap dari job miliknya
-  // sendiri) supaya gedung Warden tidak menjulang 4x lipat gedung Wright.
+  // Statistik per Ward -- dipakai untuk profil Warden DAN tinggi gedung
+  // Warden. Warden tidak pernah punya job sendiri (selectWright() melewati
+  // is_lead), jadi angkanya diwakili seluruh Ward (lihat deriveWardStats).
+  // Tinggi gedung memakai angka yang sama dengan Revenue 30D di profilnya,
+  // supaya gedung Warden ikut naik setiap Wright di Ward-nya kena seal.
   const statsByDistrict = useMemo(() => {
     const map = new Map<
       DistrictId,
@@ -220,10 +220,14 @@ export function RealtimeCityDashboard({
         id: a.id,
         ticker: a.ticker,
         district: a.district,
-        revenue30d: statsByAgent.get(a.id)?.revenue30d ?? 0,
+        // Warden: akumulasi seluruh Ward (sama dengan Revenue 30D di profil);
+        // Wright: job miliknya sendiri.
+        revenue30d: a.isLead
+          ? (statsByDistrict.get(a.district)?.revenue30d ?? 0)
+          : (statsByAgent.get(a.id)?.revenue30d ?? 0),
         status: statusByAgent.get(a.id) ?? 'idle',
       })),
-    [agents, statsByAgent, statusByAgent],
+    [agents, statsByAgent, statsByDistrict, statusByAgent],
   );
 
   const sealedCount = useMemo(

@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
 import { createJob, listJobs } from '@/lib/supabase/queries';
 import { runWardJob } from '@/lib/agents/wright-runtime';
@@ -7,9 +7,11 @@ import { isOnChainEscrowConfigured } from '@/lib/web3/strongbox';
 import { WARD_LABEL } from '@/types/domain';
 import type { JobStatus } from '@/types/enums';
 
-// Wright yang dipilih Warden mengerjakan lewat Gemini di dalam request ini --
-// beri waktu cukup di Vercel.
-export const maxDuration = 60;
+// Seleksi Wright oleh Warden (~30 dtk, WARDEN_SELECT_MS) + kerja Wright lewat
+// Gemini (~35-45 dtk) berjalan di background (after) request ini -- beri
+// waktu cukup di Vercel. Batas maksimum tergantung plan; kalau plan-mu hanya
+// mengizinkan 60 dtk, turunkan WARDEN_SELECT_MS.
+export const maxDuration = 90;
 
 // Batas input & penyalahgunaan (tiap job baru = satu panggilan Gemini).
 const MAX_TITLE_LENGTH = 120;
@@ -209,7 +211,9 @@ export async function POST(request: Request) {
   // supaya client langsung melihat statusnya bergerak ke 'review' di Job
   // Board. Kegagalan di sini TIDAK membatalkan job -- wage tetap aman di
   // Strongbox dan kegagalannya dicatat sendiri ke Ledger Wall oleh runWardJob.
-  await runWardJob(data.id).catch(() => {});
+  after(async () => {
+    await runWardJob(data.id).catch(() => {});
+  });
 
   return NextResponse.json({ job: data }, { status: 201 });
 }

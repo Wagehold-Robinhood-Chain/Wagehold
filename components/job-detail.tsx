@@ -8,6 +8,7 @@ import { JobCard } from '@/components/job-card';
 import { Panel, PanelHeader, PanelScroll } from '@/components/ui/panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Chip } from '@/components/ui/chip';
+import { ProgressBar } from '@/components/ui/progress-bar';
 import { RANK_LABEL } from '@/types/domain';
 import { robinhoodTestnet } from '@/lib/web3/chains';
 import { setTheSeal } from '@/lib/web3/set-the-seal';
@@ -30,6 +31,58 @@ export interface JobAgentInfo {
   name: string;
   ticker: string;
   rank: Rank;
+}
+
+const STAGES = [
+  { at: 0, label: 'Warden is choosing a Wright' },
+  { at: 15, label: 'Brief assigned to a Wright' },
+  { at: 30, label: 'Reading the brief' },
+  { at: 45, label: 'Drafting the report' },
+  { at: 70, label: 'Checking the draft' },
+  { at: 95, label: 'Finalizing the deliverable' },
+] as const;
+
+/** Info kerja agent selama job belum siap di-seal: tahap yang sedang jalan
+ *  (diturunkan dari progress yang naik live lewat Realtime). */
+function WorkProgress({ job }: { job: JobSummary }) {
+  const waiting = job.status === 'open';
+  return (
+    <Panel>
+      <PanelHeader title="Work in progress" />
+      <div className="flex flex-col gap-2.5 px-3.5 py-3">
+        <p className="text-[12.5px] text-muted">
+          {waiting
+            ? 'The Warden is choosing the best Wright for this brief. This takes about 30 seconds, and this page updates by itself.'
+            : `${job.agentTicker ? `$${job.agentTicker}` : 'Your Wright'} is working on your brief. You can stay here or come back later — you will only be asked to seal once the deliverable is ready.`}
+        </p>
+        <ProgressBar value={job.progress} />
+        <ul className="flex flex-col gap-1.5">
+          {STAGES.map((st, i) => {
+            const next = STAGES[i + 1]?.at ?? 101;
+            const done = job.progress >= next;
+            const active = job.progress >= st.at && !done;
+            return (
+              <li
+                key={st.label}
+                className={
+                  done
+                    ? 'flex items-center gap-2 text-[12px] text-muted'
+                    : active
+                      ? 'flex items-center gap-2 text-[12px] text-text'
+                      : 'flex items-center gap-2 text-[12px] text-faint'
+                }
+              >
+                <span className="w-3 text-center font-mono">
+                  {done ? '✓' : active ? '…' : '·'}
+                </span>
+                {st.label}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </Panel>
+  );
 }
 
 export function JobDetail({
@@ -95,8 +148,22 @@ export function JobDetail({
     }
   }
 
+  const deliverablePanel = deliverable ? (
+    <Panel>
+      <PanelHeader title="Deliverable" />
+      <PanelScroll className="max-h-96">
+        <p className="whitespace-pre-wrap px-3.5 py-3 text-[13px] text-muted">
+          {deliverable}
+        </p>
+      </PanelScroll>
+    </Panel>
+  ) : null;
+
   return (
     <div className="flex flex-col gap-3">
+      {/* Saat review: hasil kerja tampil DULU, baru gerbang seal di bawahnya. */}
+      {job.status === 'review' && deliverablePanel}
+
       <Panel>
         <PanelHeader title="Job" />
         <JobCard
@@ -162,16 +229,11 @@ export function JobDetail({
         )}
       </Panel>
 
-      {deliverable && (
-        <Panel>
-          <PanelHeader title="Deliverable" />
-          <PanelScroll className="max-h-96">
-            <p className="whitespace-pre-wrap px-3.5 py-3 text-[13px] text-muted">
-              {deliverable}
-            </p>
-          </PanelScroll>
-        </Panel>
+      {(job.status === 'open' || job.status === 'working') && (
+        <WorkProgress job={job} />
       )}
+
+      {job.status !== 'review' && deliverablePanel}
 
       <Panel>
         <PanelHeader title="Ledger" />

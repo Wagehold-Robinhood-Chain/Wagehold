@@ -29,15 +29,16 @@ const ACTIONABLE_STATUSES: JobRow['status'][] = ['open', 'working', 'revision'];
  *
  * Kriteria (belum ada spesifikasi persis di brief -- keputusan
  * implementasi, didokumentasikan supaya bisa didebat/diubah):
- *  1. Paling sedikit job aktif ('working') dulu -- Wright yang paling idle
- *     menang, supaya beban kerja Ward merata, bukan menumpuk di satu Wright.
- *  2. Kalau seri, rank tertinggi (lihat deriveRank, item 3) menang -- brief
- *     yang lebih sulit secara implisit lebih baik ditangani Wright yang
- *     lebih berpengalaman, dan sebaliknya untuk brief yang tidak menuntut,
- *     Wright junior tetap kebagian giliran begitu kriteria 1 menyamakannya.
- *  3. Kalau masih seri (mis. sama-sama Apprentice baru, 0 job), ticker
- *     diurutkan alfabetis -- bukan cuma tie-break yang stabil, tapi juga
- *     supaya hasilnya bisa diprediksi saat ditulis test untuk fungsi ini.
+ *  1. Paling sedikit job yang belum disegel ('working' + 'review' +
+ *     'revision') dulu -- job yang menunggu seal client tetap dihitung
+ *     beban, karena Wright-nya belum "bebas" dari job itu. (Dulu hanya
+ *     'working' yang dihitung; karena job selesai dalam hitungan detik dan
+ *     langsung pindah ke 'review', semua Wright selalu terlihat idle.)
+ *  2. Kalau seri, yang paling sedikit total job-nya menang -- round-robin
+ *     sederhana supaya giliran bergantian, bukan selalu Wright yang sama.
+ *  3. Kalau masih seri, rank tertinggi (lihat deriveRank, item 3) menang.
+ *  4. Kalau masih seri, yang paling lama tidak dapat job menang; terakhir
+ *     ticker alfabetis sebagai tie-break yang stabil.
  *
  * Warden ('agents.is_lead = true') SENGAJA tidak pernah dipilih di sini --
  * perannya me-routing (lore), bukan mengerjakan brief sendiri, konsisten
@@ -61,7 +62,7 @@ export async function selectWright(
   // rank turunan) tanpa query tambahan per Wright.
   const { data: wardJobs } = await supabase
     .from('jobs')
-    .select('agent_id, status, budget_usdc, rating')
+    .select('agent_id, status, budget_usdc, rating, created_at')
     .eq('district', district);
 
   const jobsByAgent = new Map<string, typeof wardJobs>();
@@ -74,7 +75,18 @@ export async function selectWright(
 
   const scored = agents.map((agent) => {
     const agentJobs = jobsByAgent.get(agent.id) ?? [];
-    const activeCount = agentJobs.filter((j) => j.status === 'working').length;
+    // Job yang belum disegel = masih jadi tanggungan Wright ini.
+    const activeCount = agentJobs.filter(
+      (j) =>
+        j.status === 'working' ||
+        j.status === 'review' ||
+        j.status === 'revision',
+    ).length;
+    const totalCount = agentJobs.length;
+    const lastAssignedAt = agentJobs.reduce(
+      (max, j) => Math.max(max, Date.parse(j.created_at) || 0),
+      0,
+    );
     const stats = deriveAgentStats(
       agentJobs.map((j) => ({
         status: j.status,
@@ -83,12 +95,21 @@ export async function selectWright(
       })),
     );
     const rank = deriveRank(stats.jobsSealed, stats.rating);
-    return { agent, activeCount, rankWeight: RANK_WEIGHT[rank] };
+    return {
+      agent,
+      activeCount,
+      totalCount,
+      lastAssignedAt,
+      rankWeight: RANK_WEIGHT[rank],
+    };
   });
 
   scored.sort((a, b) => {
     if (a.activeCount !== b.activeCount) return a.activeCount - b.activeCount;
+    if (a.totalCount !== b.totalCount) return a.totalCount - b.totalCount;
     if (a.rankWeight !== b.rankWeight) return b.rankWeight - a.rankWeight;
+    if (a.lastAssignedAt !== b.lastAssignedAt)
+      return a.lastAssignedAt - b.lastAssignedAt;
     return a.agent.ticker.localeCompare(b.agent.ticker);
   });
 
@@ -142,7 +163,7 @@ export async function runWardJob(jobId: string): Promise<void> {
       .single();
     agent = data;
   } else {
-    agent = await selectWright(supabase, job.district);
+    agent = await wardenSelects(supabase, jobId, job.district);
   }
 
   if (!agent) {
@@ -153,13 +174,14 @@ export async function runWardJob(jobId: string): Promise<void> {
       'error',
       `No Wright is available in the ${WARD_LABEL[job.district]} yet -- check that the seed migration (0002) has run.`,
     );
+    await setProgress(supabase, jobId, 0);
     return;
   }
 
   if (!job.agent_id) {
     await supabase
       .from('jobs')
-      .update({ agent_id: agent.id, status: 'working', progress: 35 })
+      .update({ agent_id: agent.id, status: 'working', progress: 15 })
       .eq('id', jobId);
     await logEvent(
       supabase,
@@ -171,7 +193,7 @@ export async function runWardJob(jobId: string): Promise<void> {
   } else {
     await supabase
       .from('jobs')
-      .update({ status: 'working', progress: 60 })
+      .update({ status: 'working', progress: 30 })
       .eq('id', jobId);
     if (isRevision) {
       await logEvent(
@@ -191,10 +213,74 @@ export async function runWardJob(jobId: string): Promise<void> {
     agent.system_prompt?.trim() || fallbackSystemPrompt(agent, job.district);
   const userPrompt = buildUserPrompt(job, revisionNote);
 
+  await setProgress(supabase, jobId, 30);
+  await logEvent(
+    supabase,
+    jobId,
+    agent.name,
+    'reading_brief',
+    `${agent.name} is reading the brief${isRevision ? ' and your revision notes' : ''}.`,
+  );
+  await setProgress(supabase, jobId, 45);
+  await logEvent(
+    supabase,
+    jobId,
+    agent.name,
+    'drafting',
+    `${agent.name} is drafting the ${isRevision ? 'revised ' : ''}report.`,
+  );
+
+  // Progres jalan berdasarkan waktu (45% -> 90%) selama Wright "bekerja",
+  // supaya client sempat melihat tahapannya bergerak. Kalau Gemini selesai
+  // lebih cepat dari MIN_WORK_MS, sisa waktunya ditunggu dulu (lihat di
+  // bawah) -- ini pacing tampilan, bukan kerja tambahan. Atur lewat env
+  // WRIGHT_MIN_WORK_MS (0 = tanpa jeda). Tetap di bawah maxDuration 60 detik.
+  const minWorkMs = Number(process.env.WRIGHT_MIN_WORK_MS ?? 35_000);
+  const workStartedAt = Date.now();
+  let checkingLogged = false;
+  const targetProgress = () =>
+    minWorkMs > 0
+      ? 45 +
+        Math.floor(45 * Math.min(1, (Date.now() - workStartedAt) / minWorkMs))
+      : 90;
+
+  let current = 45;
+  const tick = async () => {
+    const next = Math.max(current, Math.min(90, targetProgress()));
+    if (next === current) return;
+    current = next;
+    await setProgress(supabase, jobId, current);
+    if (current >= 70 && !checkingLogged) {
+      checkingLogged = true;
+      await logEvent(
+        supabase,
+        jobId,
+        agent.name,
+        'checking',
+        `${agent.name} is checking the draft against the brief.`,
+      );
+    }
+  };
+  const heartbeat = setInterval(() => void tick(), 2_000);
+
   try {
     const { text } = await callGemini(systemPrompt, userPrompt, {
       model: agent.model,
     });
+    // Gemini cepat selesai? Tunggu sisa waktu kerja sambil progres terus naik.
+    const remaining = minWorkMs - (Date.now() - workStartedAt);
+    if (remaining > 0) await sleep(remaining);
+    clearInterval(heartbeat);
+    await tick();
+
+    await setProgress(supabase, jobId, 95);
+    await logEvent(
+      supabase,
+      jobId,
+      agent.name,
+      'finalizing',
+      `${agent.name} is finishing up and attaching the deliverable.`,
+    );
 
     await supabase
       .from('jobs')
@@ -206,9 +292,10 @@ export async function runWardJob(jobId: string): Promise<void> {
       jobId,
       agent.name,
       'submitted',
-      `${agent.name} delivered the report. Awaiting your seal.`,
+      `${agent.name} delivered the report. Review the deliverable, then set the seal or send it back.`,
     );
   } catch (err) {
+    clearInterval(heartbeat);
     const message = err instanceof Error ? err.message : 'unknown error';
 
     // Kembalikan ke 'open' -- bukan macet di 'working' -- supaya jelas untuk
@@ -251,6 +338,63 @@ async function latestRevisionNote(
     .limit(1);
 
   return data?.[0]?.note ?? null;
+}
+
+/** Update progress job (dipantau live lewat Supabase Realtime di Job Detail
+ *  dan Job Board). Tidak pernah melempar -- progres hanyalah informasi. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Fase seleksi: Warden "memilih" Wright selama WARDEN_SELECT_MS (default
+ *  30 detik, 0 = langsung). Job tetap 'open' -- progress 0->14 dan event di
+ *  Ledger membuat client melihat prosesnya. Wright baru dipilih di AKHIR
+ *  fase ini (bukan di awal) supaya hitungan beban/giliran sudah memuat job
+ *  lain yang di-assign selama menunggu. */
+async function wardenSelects(
+  supabase: ServiceClient,
+  jobId: string,
+  district: DistrictId,
+): Promise<AgentRow | null> {
+  const totalMs = Number(process.env.WARDEN_SELECT_MS ?? 30_000);
+  const actor = `${WARD_LABEL[district]} Warden`;
+
+  if (totalMs > 0) {
+    const steps: { at: number; progress: number; note: string }[] = [
+      {
+        at: 0,
+        progress: 2,
+        note: `The ${WARD_LABEL[district]} Warden is reading the brief and choosing a Wright.`,
+      },
+      {
+        at: 0.33,
+        progress: 7,
+        note: 'Checking which Wrights are free and comparing their track records.',
+      },
+      {
+        at: 0.66,
+        progress: 12,
+        note: 'Narrowing down the candidates.',
+      },
+    ];
+    const startedAt = Date.now();
+    for (const step of steps) {
+      const wait = step.at * totalMs - (Date.now() - startedAt);
+      if (wait > 0) await sleep(wait);
+      await setProgress(supabase, jobId, step.progress);
+      await logEvent(supabase, jobId, actor, 'selecting', step.note);
+    }
+    const rest = totalMs - (Date.now() - startedAt);
+    if (rest > 0) await sleep(rest);
+  }
+
+  return selectWright(supabase, district);
+}
+
+async function setProgress(
+  supabase: ServiceClient,
+  jobId: string,
+  progress: number,
+) {
+  await supabase.from('jobs').update({ progress }).eq('id', jobId);
 }
 
 async function logEvent(

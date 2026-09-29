@@ -41,6 +41,14 @@ const RATING_LABELS: Record<number, string> = {
   5: 'Excellent',
 };
 
+/** Datang dari tombol "Review & seal" di Job Board (/jobs/[id]#seal):
+ *  gulir langsung ke gerbang seal supaya rating bintang terlihat. */
+function scrollToSealIfHashed(el: HTMLDivElement | null) {
+  if (el && typeof window !== 'undefined' && window.location.hash === '#seal') {
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+}
+
 export function JobCard({
   job,
   isOwnJob,
@@ -54,8 +62,9 @@ export function JobCard({
   const isReview = job.status === 'review';
   const [composing, setComposing] = useState(false);
   const [note, setNote] = useState('');
-  // Rating opsional dari client -- 0 = belum dipilih, tidak dikirim ke server.
+  // Rating wajib kalau job punya Wright -- 0 = belum dipilih, tombol seal terkunci.
   const [rating, setRating] = useState(0);
+  const needsRating = !!job.agentTicker && rating === 0;
 
   function confirmSendBack() {
     if (!note.trim()) return;
@@ -92,14 +101,53 @@ export function JobCard({
         {job.agentTicker && <span>${job.agentTicker}</span>}
       </div>
 
-      {job.status === 'working' && <ProgressBar value={job.progress} />}
+      {(job.status === 'open' || job.status === 'working') && (
+        <div className="flex items-center gap-1.5 text-[11.5px] text-muted">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-good opacity-60" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-good" />
+          </span>
+          <span>
+            {job.status === 'open'
+              ? 'The Warden is choosing a Wright…'
+              : `${job.agentTicker ? `$${job.agentTicker}` : 'A Wright'} is working on this brief · ${Math.round(job.progress)}%`}
+          </span>
+        </div>
+      )}
+
+      {(job.status === 'working' || job.status === 'open') && (
+        <ProgressBar value={job.progress} />
+      )}
 
       {/* Gerbang seal <-> form "Send back" bergantian dengan fade pendek. `mode="wait"`
           = yang lama selesai keluar dulu, baru yang baru masuk (tanpa lompatan tinggi). */}
       <AnimatePresence mode="wait" initial={false}>
-        {isReview && isOwnJob && !composing && (
+        {isReview && isOwnJob && linkToDetail && (
+          <motion.div
+            key="review-link"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.15 }}
+            className="flex flex-col gap-1.5"
+          >
+            <p className="text-[11.5px] text-warn">
+              The Wright has delivered. Read the deliverable, rate the work (★)
+              — required — then set the seal.
+            </p>
+            <Link href={`/jobs/${job.id}#seal`} className="w-fit">
+              <Button variant="primary" size="small">
+                Review &amp; seal
+              </Button>
+            </Link>
+          </motion.div>
+        )}
+
+        {isReview && isOwnJob && !linkToDetail && !composing && (
           <motion.div
             key="gate"
+            id="seal"
+            ref={scrollToSealIfHashed}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
@@ -112,7 +160,7 @@ export function JobCard({
             {job.agentTicker && (
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] text-muted">
-                  Rate this Wright&apos;s work (optional)
+                  Rate this Wright&apos;s work (required to set the seal)
                 </label>
                 <div className="flex items-center gap-1" role="radiogroup">
                   {[1, 2, 3, 4, 5].map((n) => (
@@ -142,12 +190,18 @@ export function JobCard({
                 </div>
               </div>
             )}
+            {needsRating && (
+              <p className="text-[11px] text-faint">
+                Pick a star rating to unlock “Set the seal”.
+              </p>
+            )}
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="primary"
                 size="small"
                 onClick={() => onSetSeal?.(rating > 0 ? rating : undefined)}
-                disabled={busy}
+                disabled={busy || needsRating}
+                title={needsRating ? 'Rate the Wright first' : undefined}
               >
                 {busy ? (busyLabel ?? 'Setting the seal…') : 'Set the seal'}
               </Button>
@@ -162,7 +216,7 @@ export function JobCard({
           </motion.div>
         )}
 
-        {isReview && isOwnJob && composing && (
+        {isReview && isOwnJob && !linkToDetail && composing && (
           <motion.div
             key="compose"
             initial={{ opacity: 0, y: 6 }}

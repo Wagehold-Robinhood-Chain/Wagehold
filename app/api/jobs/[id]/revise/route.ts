@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { createClient, createServiceRoleClient } from '@/lib/supabase/server';
 import { reviseJob } from '@/lib/supabase/queries';
 import { runWardJob } from '@/lib/agents/wright-runtime';
@@ -70,7 +70,9 @@ export async function POST(
   // Sama seperti POST /api/jobs: Wright yang sudah di-assign langsung
   // mengerjakan ulang briefnya dengan catatan revisi si client (Fase 3
   // item 4), sebelum request ini selesai. Berlaku untuk kelima Ward.
-  await runWardJob(id).catch(() => {});
+  after(async () => {
+    await runWardJob(id).catch(() => {});
+  });
 
   return NextResponse.json({ ok: true });
 }

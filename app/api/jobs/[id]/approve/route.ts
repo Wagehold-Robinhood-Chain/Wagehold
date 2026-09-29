@@ -45,7 +45,7 @@ export async function POST(
   // menyentuh RPC.
   const { data: jobRow } = await supabase
     .from('jobs')
-    .select('client_id, escrow_tx')
+    .select('client_id, escrow_tx, agent_id')
     .eq('id', id)
     .single();
 
@@ -61,6 +61,14 @@ export async function POST(
   const rating = parseRating(body?.rating);
   if (rating && typeof rating === 'object') {
     return NextResponse.json({ error: rating.error }, { status: 400 });
+  }
+
+  // Job yang dikerjakan Wright wajib di-rate sebelum seal.
+  if (jobRow?.agent_id && typeof rating !== 'number') {
+    return NextResponse.json(
+      { error: 'Rate the Wright (1-5) before setting the seal' },
+      { status: 400 },
+    );
   }
 
   if (jobRow?.escrow_tx) {

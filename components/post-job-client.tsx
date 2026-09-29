@@ -104,10 +104,10 @@ export function PostJobClient({
       if (!res.ok) throw new Error(data.error ?? 'Something went wrong');
 
       setPendingLock(null);
-      // Job baru langsung terlihat di tab "Open" -- push + refresh supaya
-      // Job Board (Server Component) mengambil ulang data.
-      router.push('/jobs');
-      router.refresh();
+      // Agent mengerjakan di background -- arahkan client ke halaman job
+      // supaya langsung melihat progres kerjanya (live), bukan menunggu
+      // sampai siap di-seal.
+      router.push(data.job?.id ? `/jobs/${data.job.id}` : '/jobs');
     } catch (err) {
       const base = err instanceof Error ? err.message : 'Something went wrong';
       setError(

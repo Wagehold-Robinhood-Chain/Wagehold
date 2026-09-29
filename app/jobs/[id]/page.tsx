@@ -1,8 +1,13 @@
-import { notFound } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
-import { getJobById, getAgentById } from "@/lib/supabase/queries";
-import { RealtimeJobDetail } from "@/components/realtime-job-detail";
-import type { JobAgentInfo, JobDetailEvent } from "@/components/job-detail";
+import { notFound } from 'next/navigation';
+import { createClient } from '@/lib/supabase/server';
+import {
+  getJobById,
+  getAgentById,
+  listJobsByAgent,
+} from '@/lib/supabase/queries';
+import { deriveAgentStats, deriveRank } from '@/lib/agent-stats';
+import { RealtimeJobDetail } from '@/components/realtime-job-detail';
+import type { JobAgentInfo, JobDetailEvent } from '@/components/job-detail';
 
 // Render awal saja -- setelah mount, RealtimeJobDetail mendengar perubahan
 // job ini dan Ledger-nya lewat Supabase Realtime (Item 11), bukan lagi
@@ -36,7 +41,21 @@ export default async function JobDetailPage({
   if (job.agent_id) {
     const { data } = await getAgentById(supabase, job.agent_id);
     if (data) {
-      agent = { id: data.id, name: data.name, ticker: data.ticker, rank: data.rank };
+      // Fase 3 item 3: rank sama seperti Wright Profile & City Dashboard --
+      // dari sealed jobs + rating sungguhan Wright ini, bukan agents.rank.
+      let rank = data.rank;
+      if (!data.is_lead) {
+        const { data: agentJobs } = await listJobsByAgent(supabase, data.id);
+        const stats = deriveAgentStats(
+          (agentJobs ?? []).map((j) => ({
+            status: j.status,
+            budgetUsdc: Number(j.budget_usdc),
+            rating: j.rating,
+          })),
+        );
+        rank = deriveRank(stats.jobsSealed, stats.rating);
+      }
+      agent = { id: data.id, name: data.name, ticker: data.ticker, rank };
     }
   }
 
@@ -49,9 +68,9 @@ export default async function JobDetailPage({
     actorLabel: e.actor,
     text: e.note ?? e.type,
     tx: e.tx,
-    atLabel: new Date(e.at).toLocaleString("en-US", {
-      dateStyle: "medium",
-      timeStyle: "short",
+    atLabel: new Date(e.at).toLocaleString('en-US', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
     }),
   }));
 

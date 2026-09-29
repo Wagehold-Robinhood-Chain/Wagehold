@@ -1,9 +1,11 @@
-"use client";
+'use client';
 
-import { useState, type FormEvent } from "react";
-import { Button } from "@/components/ui/button";
-import { WARD_LABEL } from "@/types/domain";
-import type { DistrictId } from "@/types/domain";
+import { useState, type FormEvent } from 'react';
+import { Button } from '@/components/ui/button';
+import { WARD_LABEL } from '@/types/domain';
+import { WAGE_SYMBOL } from '@/lib/currency';
+import { isOnChainEscrowConfigured } from '@/lib/web3/strongbox';
+import type { DistrictId } from '@/types/domain';
 
 export interface PostJobValues {
   title: string;
@@ -21,7 +23,7 @@ export function PostJobForm({
   onSubmit: (values: PostJobValues) => void;
   submitting?: boolean;
   /** Label tombol yang lebih spesifik selagi submitting (mis. "Approving
-   *  USDC…" / "Saving job…" dari alur on-chain, Fase 2 item 6). Jatuh ke
+   *  $WAGEHOLD…" / "Saving job…" dari alur on-chain, Fase 2 item 6). Jatuh ke
    *  "Locking wage…" kalau tidak diisi. */
   submittingLabel?: string;
   /** Dipakai saat datang dari tombol "Hire" di Page E (Wright Profile) --
@@ -29,10 +31,12 @@ export function PostJobForm({
    *  job, Fase 3 item 5), jadi baru sebatas mem-prefill Ward-nya. */
   initialDistrict?: DistrictId;
 }) {
-  const [title, setTitle] = useState("");
-  const [brief, setBrief] = useState("");
-  const [district, setDistrict] = useState<DistrictId>(initialDistrict ?? "research");
-  const [budget, setBudget] = useState("");
+  const [title, setTitle] = useState('');
+  const [brief, setBrief] = useState('');
+  const [district, setDistrict] = useState<DistrictId>(
+    initialDistrict ?? 'research',
+  );
+  const [budget, setBudget] = useState('');
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -41,9 +45,9 @@ export function PostJobForm({
     onSubmit({ title, brief, district, budgetUsdc });
   }
 
-  const labelClass = "flex flex-col gap-1 text-[11px] tracking-wide text-muted";
+  const labelClass = 'flex flex-col gap-1 text-[11px] tracking-wide text-muted';
   const inputClass =
-    "rounded-md border border-line bg-bg px-2.5 py-1.5 text-sm text-text outline-none focus-visible:border-gold";
+    'rounded-md border border-line bg-bg px-2.5 py-1.5 text-sm text-text outline-none focus-visible:border-gold';
 
   return (
     <form
@@ -88,7 +92,7 @@ export function PostJobForm({
       </label>
 
       <label className={labelClass}>
-        Wage (USDC)
+        Wage ({WAGE_SYMBOL})
         <input
           className={inputClass}
           type="number"
@@ -100,9 +104,18 @@ export function PostJobForm({
         />
       </label>
 
+      {!isOnChainEscrowConfigured && (
+        <p className="col-span-full text-[11.5px] text-faint">
+          Simulation mode: the wage is recorded in the database only. No{' '}
+          {WAGE_SYMBOL} is moved and no wallet is needed.
+        </p>
+      )}
+
       <div className="col-span-full flex justify-end">
         <Button type="submit" variant="primary" disabled={submitting}>
-          {submitting ? submittingLabel ?? "Locking wage…" : "Lock wage in the Strongbox"}
+          {submitting
+            ? (submittingLabel ?? 'Locking wage…')
+            : 'Lock wage in the Strongbox'}
         </Button>
       </div>
     </form>

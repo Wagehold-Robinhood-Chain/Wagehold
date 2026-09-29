@@ -220,27 +220,28 @@ Catatan versi Three.js: `renderer.outputEncoding` di prototipe (API lama) digant
 - Semua pesan "login belum ada" di Page B/C/D sudah diganti jadi link langsung ke `/login`.
 - **Belum ada**: halaman profil/pengaturan akun, dan belum ada provider selain email magic link (mis. OAuth Google/GitHub) -- di luar scope item 9.
 
-## Research Ward (live agent)
+## Semua Ward (live agents + routing) -- Fase 1 item 10 & Fase 3 item 4-5
 
-Fase 1 item 10: **Deepdive ($DIVE)**, Wright Journeyman di Research Ward, sekarang benar-benar mengerjakan job -- bukan simulasi. Item brief aslinya minta "Claude API", tapi diganti AI gratisan (**Google Gemini**, tier gratis Google AI Studio) supaya bisa jalan tanpa API key berbayar.
+Fase 1 item 10: **Deepdive ($DIVE)**, Wright Journeyman di Research Ward, adalah Wright pertama yang benar-benar mengerjakan job -- bukan simulasi. Item brief aslinya minta "Claude API", tapi diganti AI gratisan (**Google Gemini**, tier gratis Google AI Studio) supaya bisa jalan tanpa API key berbayar.
+
+Fase 3 item 4: keempat Ward lain (Chain, Craft, Watch, Hearth) sekarang **sama-sama hidup** -- `lib/agents/research-wright.ts` (khusus Research) diganti `lib/agents/wright-runtime.ts` yang generik untuk kelima Ward. Fase 3 item 5: job baru tidak lagi selalu jatuh ke satu Wright tetap -- `selectWright()` di file yang sama memilih Wright non-Warden yang paling idle di Ward itu (lihat detail kriteria di komentar fungsinya).
 
 **Setup:**
 1. Ambil API key gratis di [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 2. Isi `GEMINI_API_KEY=` di `.env.local`.
-3. Jalankan `supabase/migrations/0003_research_wright_live.sql` (setelah 0001 & 0002) -- ini menambah kolom `jobs.deliverable` dan mengisi `system_prompt`/`model` milik Deepdive, yang sebelumnya kolom kosong tak terpakai.
+3. Jalankan `supabase/migrations/0003_research_wright_live.sql` (mengisi `system_prompt`/`model` Deepdive) dan `0008_all_wards_live.sql` (mengisi 14 Wright non-Warden lain) setelah 0001-0007. Kolom itu sebelumnya kosong tak terpakai.
 
-**Alur (`lib/agents/research-wright.ts`, dipanggil dari `POST /api/jobs` dan `POST /api/jobs/:id/revise`):**
-1. Job baru dengan `district: "research"` dan status `open` → di-assign ke Deepdive (`agent_id` diisi, status → `working`), dicatat sebagai event `assigned` di Ledger.
-2. `lib/agents/gemini.ts` memanggil Gemini (`generateContent`, model dari `agents.model` yaitu `gemini-3.8-flash`) dengan `agents.system_prompt` sebagai system instruction dan judul+brief+budget job sebagai user prompt.
-3. Berhasil → jawabannya disimpan di `jobs.deliverable`, status → `review`, event `submitted` -- client bisa membacanya di panel **Deliverable** baru di Page D sebelum Set the seal.
-4. **Send back** (revise) → status balik `working`, Deepdive dipanggil ulang dengan catatan revisi client disisipkan ke prompt (dicari dari event `sent_back` terakhir), lalu jalan lagi dari langkah 2.
-5. Gagal (API key kosong, timeout, Gemini error) → job **kembali ke `open`** (bukan macet di `working`), event `error` tercatat menyebutkan alasannya. Wage tetap aman di Strongbox (Charter I) -- job bisa dites lagi dengan mengulang atau memposting ulang.
+**Alur (`lib/agents/wright-runtime.ts`, dipanggil dari `POST /api/jobs` dan `POST /api/jobs/:id/revise`):**
+1. Job baru dengan status `open` dan belum punya `agent_id` → `selectWright()` memilih satu Wright non-Warden di Ward job itu (paling sedikit job `working` aktif; seri → rank tertinggi; seri lagi → ticker alfabetis). Job di-assign (`agent_id` diisi, status → `working`), dicatat sebagai event `assigned` di Ledger.
+2. `lib/agents/gemini.ts` memanggil Gemini (`generateContent`, model dari `agents.model` yaitu `gemini-3.8-flash`) dengan `agents.system_prompt` Wright itu sebagai system instruction dan judul+brief+budget job sebagai user prompt.
+3. Berhasil → jawabannya disimpan di `jobs.deliverable`, status → `review`, event `submitted` -- client bisa membacanya di panel **Deliverable** di Page D sebelum Set the seal.
+4. **Send back** (revise) → status balik `working`, Wright yang sama (bukan `selectWright()` ulang) dipanggil lagi dengan catatan revisi client disisipkan ke prompt (dicari dari event `sent_back` terakhir), lalu jalan lagi dari langkah 2.
+5. Gagal (API key kosong, timeout, Gemini error) → job **kembali ke `open`** (bukan macet di `working`), event `error` tercatat menyebutkan alasannya. Wage tetap aman di Strongbox (Charter I) -- job bisa dites lagi dengan Send back (kalau sudah pernah berhasil sekali) atau memposting ulang job baru.
 
 **Yang sengaja belum dikerjakan:**
-- **Ward lain** (Chain, Craft, Watch, Hearth) masih diam di `open` -- runtime-nya masing-masing ditunda ke Fase 3 item 4. Kode di `research-wright.ts` sengaja langsung `return` kalau `job.district !== "research"`.
-- **Routing multi-Wright** (Warden memilih Wright yang paling cocok, bukan selalu Deepdive) -- itu Fase 3 item 5. Untuk sekarang satu Ward = satu Wright yang hidup.
-- **Retry UI**: kalau gagal, satu-satunya cara mencoba lagi adalah **Send back** (setelah pernah berhasil sekali) atau memposting ulang job baru -- belum ada tombol "coba lagi" langsung di job yang gagal di percobaan pertama.
-- Ganti ke Claude API sungguhan tinggal menulis `lib/agents/claude.ts` senada dengan `gemini.ts` dan menukar importnya satu baris di `research-wright.ts`.
+- **Retry UI**: kalau gagal di percobaan pertama, belum ada tombol "coba lagi" langsung di job itu -- satu-satunya jalan tetap Send back (setelah pernah berhasil sekali) atau memposting ulang.
+- Ganti ke Claude API sungguhan tinggal menulis `lib/agents/claude.ts` senada dengan `gemini.ts` dan menukar importnya satu baris di `wright-runtime.ts`.
+- `selectWright()` cuma dipanggil sekali per job baru -- kalau dua job dibuat dalam request yang tumpang tindih (race), keduanya bisa membaca "0 job aktif" yang sama dan terpilih Wright yang sama. Efeknya cuma beban kerja sedikit tidak merata (bukan bug keamanan -- wage tetap aman), belum diperbaiki dengan locking.
 
 ## Realtime Ledger Wall (Item 11)
 
@@ -263,6 +264,21 @@ Ini menyalakan tiga tabel (`jobs`, `job_events`, `agents`) di publication `supab
 **Keterbatasan yang diketahui (bukan bug, bawaan platform):**
 - Ada race condition kecil di Supabase Realtime: event yang ditulis dalam ~1-3 detik pertama setelah sebuah channel baru selesai `SUBSCRIBED` kadang tidak terkirim ([supabase-js#1599](https://github.com/supabase/supabase-js/issues/1599)). Dalam alur normal (buka halaman dulu, baru posting job dari halaman lain) ini jarang kerasa, tapi kalau kejadian, refresh manual tetap jadi fallback yang aman.
 - Belum ada indikator "live" atau status koneksi channel di UI -- kalau WebSocket putus (mis. laptop sleep), tidak ada tanda visual selain data berhenti bergerak. Reconnect otomatis ditangani `supabase-js`, tapi belum ada toast/badge yang mengonfirmasinya ke pengguna.
+
+## Pembayaran dengan $WAGEHOLD (simulasi vs on-chain)
+
+Wage dibayar dengan token **$WAGEHOLD**; simbolnya dipusatkan di `lib/currency.ts`
+(`WAGE_SYMBOL`). Agent (Research Ward/Deepdive) bekerja sama persis di kedua mode.
+
+- **Simulasi** (`NEXT_PUBLIC_STRONGBOX_ADDRESS` atau `NEXT_PUBLIC_WAGE_TOKEN_ADDRESS`
+  kosong): wage hanya tercatat di Postgres, tidak perlu connect wallet. Form Post a Job
+  menampilkan catatan "Simulation mode".
+- **On-chain** (kedua env terisi): user wajib connect wallet; wage dikunci di
+  `WageholdStrongbox`. CA token saja tidak cukup -- Strongbox harus di-deploy dulu dengan
+  CA $WAGEHOLD (`WAGE_TOKEN_ADDRESS` di `contracts/.env`), lalu alamatnya diisi ke env.
+  Langkah lengkap ada di komentar `.env.local.example`.
+- Kolom `budget_usdc` / field `budgetUsdc` tetap bernama itu (tidak di-rename supaya tidak
+  butuh migrasi); isinya adalah jumlah wage dalam $WAGEHOLD.
 
 ## Wallet connect (Fase 2 item 5)
 

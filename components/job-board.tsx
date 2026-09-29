@@ -1,18 +1,18 @@
-"use client";
+'use client';
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { AnimatePresence, motion } from "motion/react";
-import { Panel, PanelHeader, PanelScroll } from "@/components/ui/panel";
-import { EmptyState } from "@/components/ui/empty-state";
-import { Button } from "@/components/ui/button";
-import { JobTabs, type JobTab } from "@/components/job-tabs";
-import { JobCard } from "@/components/job-card";
-import { setTheSeal } from "@/lib/web3/set-the-seal";
-import { itemVariants } from "@/components/motion/primitives";
-import type { Variants } from "motion/react";
-import type { JobSummary } from "@/types/domain";
+import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { AnimatePresence, motion } from 'motion/react';
+import { Panel, PanelHeader, PanelScroll } from '@/components/ui/panel';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Button } from '@/components/ui/button';
+import { JobTabs, type JobTab } from '@/components/job-tabs';
+import { JobCard } from '@/components/job-card';
+import { setTheSeal } from '@/lib/web3/set-the-seal';
+import { itemVariants } from '@/components/motion/primitives';
+import type { Variants } from 'motion/react';
+import type { JobSummary } from '@/types/domain';
 
 export interface JobBoardItem {
   job: JobSummary;
@@ -29,32 +29,47 @@ const listVariants: Variants = {
   visible: { transition: { staggerChildren: 0.05, delayChildren: 0.12 } },
 };
 
-const TAB_ORDER = ["review", "working", "open", "paid"] as const;
+const TAB_ORDER = ['review', 'working', 'open', 'paid'] as const;
 type TabId = (typeof TAB_ORDER)[number];
 
 const TAB_LABEL: Record<TabId, string> = {
-  review: "Awaiting seal",
-  working: "In progress",
-  open: "Open",
-  paid: "Sealed",
+  review: 'Awaiting seal',
+  working: 'In progress',
+  open: 'Open',
+  paid: 'Sealed',
 };
 
 const EMPTY_COPY: Record<TabId, string> = {
-  review: "Nothing is waiting for your seal.",
-  working: "No Wright is at work right now.",
-  open: "No open jobs. Post one to start the line.",
-  paid: "No sealed jobs yet.",
+  review: 'Nothing is waiting for your seal.',
+  working: 'No Wright is at work right now.',
+  open: 'No open jobs. Post one to start the line.',
+  paid: 'No sealed jobs yet.',
 };
 
-export function JobBoard({ items, signedIn }: { items: JobBoardItem[]; signedIn: boolean }) {
+export function JobBoard({
+  items: allItems,
+  signedIn,
+}: {
+  items: JobBoardItem[];
+  signedIn: boolean;
+}) {
   const router = useRouter();
-  const [tab, setTab] = useState<TabId>("review");
+  // Job Board per akun: hanya job milik user yang login. Filter di sini
+  // (bukan di pemanggil) supaya City Dashboard -- yang tetap butuh semua job
+  // untuk statistik kota -- juga hanya menampilkan job milik akunnya di panel ini.
+  const items = useMemo(() => allItems.filter((i) => i.isOwnJob), [allItems]);
+  const [tab, setTab] = useState<TabId>('review');
   const [pending, setPending] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [steps, setSteps] = useState<Record<string, string | undefined>>({});
 
   const counts = useMemo(() => {
-    const c: Record<TabId, number> = { review: 0, working: 0, open: 0, paid: 0 };
+    const c: Record<TabId, number> = {
+      review: 0,
+      working: 0,
+      open: 0,
+      paid: 0,
+    };
     for (const { job } of items) {
       if (job.status in c) c[job.status as TabId] += 1;
     }
@@ -65,29 +80,39 @@ export function JobBoard({ items, signedIn }: { items: JobBoardItem[]; signedIn:
     id,
     label: TAB_LABEL[id],
     count: counts[id],
-    alert: id === "review",
+    alert: id === 'review',
   }));
 
   const visible = items.filter(({ job }) => job.status === tab);
 
-  async function callJobAction(job: JobSummary, path: "approve" | "revise", note?: string) {
+  async function callJobAction(
+    job: JobSummary,
+    path: 'approve' | 'revise',
+    noteOrRating?: string | number,
+  ) {
     const jobId = job.id;
     setPending((p) => ({ ...p, [jobId]: true }));
-    setErrors((e) => ({ ...e, [jobId]: "" }));
+    setErrors((e) => ({ ...e, [jobId]: '' }));
 
     try {
-      if (path === "approve") {
+      if (path === 'approve') {
         // Fase 2 item 7: kalau wage terkunci on-chain, ini juga mengirim
         // approve() dari wallet client -- lihat lib/web3/set-the-seal.ts.
-        await setTheSeal(job, (label) => setSteps((s) => ({ ...s, [jobId]: label })));
+        await setTheSeal(
+          job,
+          (label) => setSteps((s) => ({ ...s, [jobId]: label })),
+          typeof noteOrRating === 'number' ? noteOrRating : undefined,
+        );
       } else {
+        const note =
+          typeof noteOrRating === 'string' ? noteOrRating : undefined;
         const res = await fetch(`/api/jobs/${jobId}/${path}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: note !== undefined ? JSON.stringify({ note }) : undefined,
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error ?? "Something went wrong");
+        if (!res.ok) throw new Error(data.error ?? 'Something went wrong');
       }
       // Refetch data server-side -- lebih sederhana daripada patch state lokal,
       // dan City Dashboard sudah pakai pola revalidate = 0 yang sama.
@@ -95,7 +120,7 @@ export function JobBoard({ items, signedIn }: { items: JobBoardItem[]; signedIn:
     } catch (err) {
       setErrors((e) => ({
         ...e,
-        [jobId]: err instanceof Error ? err.message : "Something went wrong",
+        [jobId]: err instanceof Error ? err.message : 'Something went wrong',
       }));
     } finally {
       setPending((p) => ({ ...p, [jobId]: false }));
@@ -115,19 +140,25 @@ export function JobBoard({ items, signedIn }: { items: JobBoardItem[]; signedIn:
           </Link>
         }
       />
-      <JobTabs tabs={tabs} active={tab} onChange={(id) => setTab(id as TabId)} />
+      <JobTabs
+        tabs={tabs}
+        active={tab}
+        onChange={(id) => setTab(id as TabId)}
+      />
 
       {!signedIn && (
         <p className="border-b border-line bg-surface-2 px-3.5 py-2 text-[11.5px] text-faint">
           <Link href="/login" className="text-muted underline hover:text-text">
             Sign in
-          </Link>{" "}
-          to set the seal on your own jobs.
+          </Link>{' '}
+          to see and manage your own jobs.
         </p>
       )}
 
       <PanelScroll>
-        {visible.length === 0 ? (
+        {!signedIn ? (
+          <EmptyState>Sign in to see your jobs.</EmptyState>
+        ) : visible.length === 0 ? (
           <EmptyState>{EMPTY_COPY[tab]}</EmptyState>
         ) : (
           // key={tab}: ganti tab = daftar dibangun ulang, kartu muncul berurutan.
@@ -145,7 +176,11 @@ export function JobBoard({ items, signedIn }: { items: JobBoardItem[]; signedIn:
                 <motion.div
                   key={job.id}
                   variants={itemVariants}
-                  exit={{ opacity: 0, height: 0, transition: { duration: 0.25 } }}
+                  exit={{
+                    opacity: 0,
+                    height: 0,
+                    transition: { duration: 0.25 },
+                  }}
                   className="overflow-hidden"
                 >
                   <JobCard
@@ -154,8 +189,10 @@ export function JobBoard({ items, signedIn }: { items: JobBoardItem[]; signedIn:
                     busy={pending[job.id]}
                     busyLabel={steps[job.id]}
                     error={errors[job.id]}
-                    onSetSeal={() => callJobAction(job, "approve")}
-                    onSendBack={(note) => callJobAction(job, "revise", note)}
+                    onSetSeal={(rating) =>
+                      callJobAction(job, 'approve', rating)
+                    }
+                    onSendBack={(note) => callJobAction(job, 'revise', note)}
                   />
                 </motion.div>
               ))}

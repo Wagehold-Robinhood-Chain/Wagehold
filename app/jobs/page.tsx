@@ -1,6 +1,6 @@
-import { createClient } from "@/lib/supabase/server";
-import { listJobs, listAgents } from "@/lib/supabase/queries";
-import { RealtimeJobBoard } from "@/components/realtime-job-board";
+import { createClient } from '@/lib/supabase/server';
+import { listJobs, listAgents } from '@/lib/supabase/queries';
+import { RealtimeJobBoard } from '@/components/realtime-job-board';
 
 // Render awal saja -- setelah mount, RealtimeJobBoard mendengar perubahan
 // tabel `jobs` lewat Supabase Realtime (Item 11), bukan lagi lewat
@@ -10,15 +10,18 @@ export const revalidate = 0;
 export default async function JobsPage() {
   const supabase = await createClient();
 
-  const [
-    {
-      data: { user },
-    },
-    jobsRes,
-    agentsRes,
-  ] = await Promise.all([supabase.auth.getUser(), listJobs(supabase), listAgents(supabase)]);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  const rows = jobsRes.data ?? [];
+  // Job Board bersifat per akun: hanya job milik user yang login. Belum
+  // login = board kosong (tidak ada job yang ditampilkan secara global).
+  const [jobsRes, agentsRes] = await Promise.all([
+    user ? listJobs(supabase, undefined, user.id) : null,
+    listAgents(supabase),
+  ]);
+
+  const rows = jobsRes?.data ?? [];
 
   // Ticker Wright tidak pernah berubah, jadi cukup diambil sekali di sini
   // (bukan lewat subscribe tabel `agents`) untuk dicocokkan ke `agent_id`
@@ -30,6 +33,9 @@ export default async function JobsPage() {
 
   return (
     <RealtimeJobBoard
+      // key = id user: ganti akun (sign in/out) -> board dibangun ulang dari
+      // data server milik akun itu, tidak membawa state akun sebelumnya.
+      key={user?.id ?? 'anon'}
       initialJobs={rows.map((j) => ({
         id: j.id,
         title: j.title,

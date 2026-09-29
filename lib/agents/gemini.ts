@@ -7,8 +7,8 @@
 // `lib/agents/claude.ts` senada dan tukar importnya di research-wright.ts --
 // pemanggil (research-wright.ts) tidak perlu berubah selain nama fungsi.
 
-const DEFAULT_MODEL = "gemini-3.8-flash";
-const ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+const DEFAULT_MODEL = 'gemini-3.8-flash';
+const ENDPOINT_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 export interface GeminiCallResult {
   text: string;
@@ -20,67 +20,142 @@ interface GeminiCallOptions {
   timeoutMs?: number;
 }
 
+// Status yang sifatnya sementara di sisi Google (bukan salah request kita):
+// 429 = kena rate limit, 5xx = server sibuk / mati sebentar. Layak dicoba ulang.
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const MAX_ATTEMPTS = 4;
+const BACKOFF_MS = [1_000, 2_500, 4_000];
+// Route Handler pemanggil punya maxDuration 60 detik -- berhenti mencoba ulang
+// sebelum batas itu supaya Ledger Wall sempat mencatat kegagalan dengan rapi.
+const TOTAL_BUDGET_MS = 45_000;
+
+class GeminiHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /** Melempar Error kalau API key belum diisi, request timeout, atau Gemini
- *  membalas non-2xx / tanpa teks. Sengaja TIDAK menangkap error di sini --
- *  research-wright.ts yang bertanggung jawab mencatatnya ke Ledger Wall
- *  (Charter IV) dan mengembalikan job ke status aman, bukan meng-crash
- *  Route Handler yang memanggilnya. */
+ *  membalas non-2xx / tanpa teks -- SETELAH mencoba ulang untuk error
+ *  sementara (503 "high demand", 429, dst.) dan, kalau diisi, mencoba model
+ *  cadangan GEMINI_FALLBACK_MODEL. Sengaja TIDAK menangkap error akhir di
+ *  sini -- research-wright.ts yang bertanggung jawab mencatatnya ke Ledger
+ *  Wall (Charter IV) dan mengembalikan job ke status aman, bukan
+ *  meng-crash Route Handler yang memanggilnya. */
 export async function callGemini(
   systemPrompt: string,
   userPrompt: string,
-  opts: GeminiCallOptions = {}
+  opts: GeminiCallOptions = {},
 ): Promise<GeminiCallResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not set");
+    throw new Error('GEMINI_API_KEY is not set');
   }
 
   // Env var menang atas nilai di database (agents.model), supaya kalau Google
   // menghentikan sebuah model cukup ganti GEMINI_MODEL di Vercel.
-  const model = process.env.GEMINI_MODEL?.trim() || opts.model?.trim() || DEFAULT_MODEL;
+  const primary =
+    process.env.GEMINI_MODEL?.trim() || opts.model?.trim() || DEFAULT_MODEL;
+  const fallback = process.env.GEMINI_FALLBACK_MODEL?.trim();
+  const models =
+    fallback && fallback !== primary ? [primary, fallback] : [primary];
+
+  // Urutan model per percobaan: kalau ada cadangan, langsung pindah ke sana di
+  // percobaan ke-2 (menunggu model yang sedang penuh biasanya sia-sia), lalu
+  // bergantian. Tanpa cadangan, semua percobaan memakai model utama.
+  const order = (i: number) => models[i % models.length];
+
+  const startedAt = Date.now();
+  const tried: string[] = [];
+  let lastError: unknown;
+
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    const model = order(i);
+    tried.push(model);
+    try {
+      return await callOnce(apiKey, model, systemPrompt, userPrompt, opts);
+    } catch (err) {
+      lastError = err;
+      const retryable =
+        (err instanceof GeminiHttpError && RETRYABLE_STATUS.has(err.status)) ||
+        (err instanceof Error &&
+          err.message.startsWith('Gemini API timed out'));
+      const wait = BACKOFF_MS[i] ?? 0;
+      const outOfBudget = Date.now() - startedAt + wait > TOTAL_BUDGET_MS;
+      if (!retryable || i === MAX_ATTEMPTS - 1 || outOfBudget) break;
+      await sleep(wait);
+    }
+  }
+
+  // Tambahkan jejak percobaan ke pesan error supaya Ledger Wall menunjukkan
+  // apakah kode retry/fallback benar-benar jalan dan model mana saja yang dicoba.
+  const base =
+    lastError instanceof Error ? lastError.message : String(lastError);
+  const detail = ` [tried ${tried.length}x: ${tried.join(' > ')}]`;
+  throw lastError instanceof GeminiHttpError
+    ? new GeminiHttpError(lastError.status, base + detail)
+    : new Error(base + detail);
+}
+
+async function callOnce(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string,
+  opts: GeminiCallOptions,
+): Promise<GeminiCallResult> {
+  const timeoutMs = opts.timeoutMs ?? 20_000;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? 30_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(
       `${ENDPOINT_BASE}/${encodeURIComponent(model)}:generateContent?key=${apiKey}`,
       {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
           generationConfig: {
             maxOutputTokens: opts.maxOutputTokens ?? 900,
             temperature: 0.4,
           },
         }),
-      }
+      },
     );
 
     if (!res.ok) {
-      const bodyText = await res.text().catch(() => "");
-      throw new Error(`Gemini API returned ${res.status}: ${bodyText.slice(0, 300)}`);
+      const bodyText = await res.text().catch(() => '');
+      throw new GeminiHttpError(
+        res.status,
+        `Gemini API returned ${res.status}: ${bodyText.slice(0, 300)}`,
+      );
     }
 
     const data: GeminiResponse = await res.json();
     const candidate = data.candidates?.[0];
     const text = candidate?.content?.parts
-      ?.map((p) => p.text ?? "")
-      .join("")
+      ?.map((p) => p.text ?? '')
+      .join('')
       .trim();
 
     if (!text) {
       throw new Error(
-        `Gemini returned no text (finishReason: ${candidate?.finishReason ?? "unknown"})`
+        `Gemini returned no text (finishReason: ${candidate?.finishReason ?? 'unknown'})`,
       );
     }
 
     return { text };
   } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`Gemini API timed out after ${opts.timeoutMs ?? 30_000}ms`);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Gemini API timed out after ${timeoutMs}ms`);
     }
     throw err;
   } finally {

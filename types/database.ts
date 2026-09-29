@@ -14,7 +14,7 @@
 // yang sebenarnya. Generate ulang dari schema sungguhan akan otomatis
 // mengisi field-field ini dengan benar.
 
-import type { DistrictId, JobStatus, Rank } from "@/types/enums";
+import type { DistrictId, JobStatus, Rank } from '@/types/enums';
 
 export interface Database {
   public: {
@@ -40,12 +40,12 @@ export interface Database {
           holders: number;
           created_at: string;
         };
-        Insert: Partial<Database["public"]["Tables"]["agents"]["Row"]> & {
+        Insert: Partial<Database['public']['Tables']['agents']['Row']> & {
           name: string;
           ticker: string;
           district: DistrictId;
         };
-        Update: Partial<Database["public"]["Tables"]["agents"]["Row"]>;
+        Update: Partial<Database['public']['Tables']['agents']['Row']>;
       };
       jobs: {
         Relationships: [];
@@ -63,16 +63,19 @@ export interface Database {
           /** Hasil kerja Wright (Research Ward saja untuk sekarang -- Fase 1
            *  item 10). null sampai statusnya 'review'. */
           deliverable: string | null;
+          /** Rating 1-5 dari client saat set-the-seal (0007_job_rating.sql).
+           *  null kalau belum di-rate (termasuk semua job sebelum 'paid'). */
+          rating: number | null;
           created_at: string;
         };
-        Insert: Partial<Database["public"]["Tables"]["jobs"]["Row"]> & {
+        Insert: Partial<Database['public']['Tables']['jobs']['Row']> & {
           title: string;
           brief: string;
           client_id: string;
           district: DistrictId;
           budget_usdc: number;
         };
-        Update: Partial<Database["public"]["Tables"]["jobs"]["Row"]>;
+        Update: Partial<Database['public']['Tables']['jobs']['Row']>;
       };
       job_events: {
         Relationships: [];
@@ -85,12 +88,12 @@ export interface Database {
           note: string | null;
           tx: string | null;
         };
-        Insert: Partial<Database["public"]["Tables"]["job_events"]["Row"]> & {
+        Insert: Partial<Database['public']['Tables']['job_events']['Row']> & {
           job_id: string;
           actor: string;
           type: string;
         };
-        Update: Partial<Database["public"]["Tables"]["job_events"]["Row"]>;
+        Update: Partial<Database['public']['Tables']['job_events']['Row']>;
       };
     };
     Views: Record<string, never>;

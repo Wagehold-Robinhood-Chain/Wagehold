@@ -1,6 +1,8 @@
 # Checklist Wagehold — Seluruh Brief
 
-> Diperbarui: 28 September 2026 — Fase 2 item 8 dikerjakan (🟡, lihat catatan item 8): harness E2E on-chain lulus di Anvil lokal (82 + 52 pengecekan), **belum dijalankan ke testnet sungguhan**, dan menemukan bug nyata di Splitter + dispute. Sebelumnya, Fase 2 item 7 dikerjakan (🟡, lihat catatan item 7): sisi server + kontrak diuji sungguhan di Anvil lokal, klik wallet di browser belum. Sebelumnya, Fase 2 item 6 dikerjakan (🟡, lihat catatan item 6). Sebelumnya, 27 September 2026 — Fase 2 item 5 selesai: tombol **Connect wallet** (Reown AppKit/WalletConnect + wagmi) di header semua halaman, target Robinhood Chain. **Terverifikasi sungguhan:** `npm install` + `next build` (compile, TypeScript, 15 route) lulus, dan SSR `/jobs/new` dicek dengan/tanpa `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`. Belum diuji: klik connect dengan wallet sungguhan (butuh browser + wallet). Item 4 tetap 🟡 (belum broadcast ke testnet sungguhan). **Fase 1 kelar (11/11), Fase 2: 4/8 selesai + item 4, 6, 7, 8 sebagian.**
+> Diperbarui: 29 September 2026 — Fase 3 item 3, 4, 5 dikerjakan dan diverifikasi (`tsc`, `eslint`, `next build` lulus, 16 route): rank Wright sekarang dari `deriveRank()` (sealed jobs + rating sungguhan, bukan seed), `lib/agents/research-wright.ts` diganti `lib/agents/wright-runtime.ts` yang menghidupkan kelima Ward (migrasi baru `0008_all_wards_live.sql` mengisi 14 Wright non-Warden sisanya), dan `selectWright()` membagi job baru ke Wright paling idle di Ward-nya (bukan lagi satu Wright tetap per Ward). Lihat catatan lengkap di bawah. **Fase 1 kelar (11/11), Fase 3: 3/5 (item 3, 4, 5 -- sisa item 1-2 butuh kontrak `WageholdRegistry` on-chain), Fase 2: 4/8 + item 4/6/7/8 sebagian.**
+>
+> Sebelumnya, 28 September 2026 — Fase 2 item 8 dikerjakan (🟡, lihat catatan item 8): harness E2E on-chain lulus di Anvil lokal (82 + 52 pengecekan), **belum dijalankan ke testnet sungguhan**, dan menemukan bug nyata di Splitter + dispute. Sebelumnya, Fase 2 item 7 dikerjakan (🟡, lihat catatan item 7): sisi server + kontrak diuji sungguhan di Anvil lokal, klik wallet di browser belum. Sebelumnya, Fase 2 item 6 dikerjakan (🟡, lihat catatan item 6). Sebelumnya, 27 September 2026 — Fase 2 item 5 selesai: tombol **Connect wallet** (Reown AppKit/WalletConnect + wagmi) di header semua halaman, target Robinhood Chain. **Terverifikasi sungguhan:** `npm install` + `next build` (compile, TypeScript, 15 route) lulus, dan SSR `/jobs/new` dicek dengan/tanpa `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`. Belum diuji: klik connect dengan wallet sungguhan (butuh browser + wallet). Item 4 tetap 🟡 (belum broadcast ke testnet sungguhan). **Fase 1 kelar (11/11), Fase 2: 4/8 selesai + item 4, 6, 7, 8 sebagian.**
 
 ## Fase 0: Prototipe Visual
 | # | Item | Status |
@@ -185,9 +187,35 @@ Satu warning linter sempat muncul (`event emitted after an external call` di `Wa
 |---|---|---|
 | 1 | Contract `WageholdRegistry` | ⬜ Belum |
 | 2 | Daftarkan 20 Wright on-chain (baru ada di Supabase, belum on-chain) | ⬜ Belum |
-| 3 | Logika rank dari rating nyata (sekarang masih angka seed statis) | ⬜ Belum |
-| 4 | Agent runtime untuk 4 Ward sisanya (Chain, Craft, Watch, Hearth) | ⬜ Belum |
-| 5 | Logika routing job per Ward (Warden membagi kerja) | ⬜ Belum |
+| 3 | Logika rank dari rating nyata (sekarang masih angka seed statis) | ✅ Selesai -- lihat catatan |
+| 4 | Agent runtime untuk 4 Ward sisanya (Chain, Craft, Watch, Hearth) | ✅ Selesai -- lihat catatan |
+| 5 | Logika routing job per Ward (Warden membagi kerja) | ✅ Selesai -- lihat catatan |
+
+**Catatan Fase 3 item 3 (Rank dari rating nyata):**
+- Sesi sebelumnya sudah menurunkan `revenue30d`, `rating`, dan `jobsSealed` dari `jobs` sungguhan (`lib/agent-stats.ts` `deriveAgentStats()`, `0007_job_rating.sql`) -- tapi chip **rank** (Apprentice/Journeyman/Master) di ketiga halaman (Wright Profile, City Dashboard, Job Detail) masih dibaca langsung dari kolom `agents.rank` (angka demo seed). Itu bagian yang belum dikerjakan sesi ini.
+- **`deriveRank(jobsSealed, rating)`** baru di `lib/agent-stats.ts`: master (≥20 job disegel **dan** rating ≥4.5), journeyman (≥5 job, rating tidak disyaratkan supaya Wright baru tidak tertahan cuma karena belum ada yang memberi rating), sisanya apprentice. Warden **tidak pernah** lewat fungsi ini -- perannya struktural (`agents.is_lead`), bukan tingkatan yang dicapai lewat volume kerja.
+- Diterapkan di ketiga tempat yang menampilkan rank: `app/agents/[id]/page.tsx`, `components/realtime-city-dashboard.tsx` (state client, ikut Realtime), dan `app/jobs/[id]/page.tsx` (Wright chip di Job Detail -- ini butuh query tambahan `listJobsByAgent` per job supaya rank yang tampil konsisten dengan Wright Profile-nya).
+- **Konsekuensi yang disengaja, didokumentasikan di komentar kode:** begitu ini aktif, deployment yang belum punya job `paid` sungguhan (seperti Supabase kamu sekarang) akan menampilkan **semua Wright non-Warden sebagai Apprentice**, walau kolom `agents.rank` seed-nya bilang Journeyman/Master. Ini konsisten dengan alasan item 3 dibuat -- rank yang tampil harus rank yang dibuktikan lewat kerja sungguhan, bukan angka demo. Kolom `agents.rank` sendiri tidak dihapus (tetap dipakai untuk Warden), cuma tidak lagi jadi sumber tampilan untuk Wright biasa.
+- Thresholds di atas **tidak ada di brief manapun** -- keputusan implementasi sesi ini, didokumentasikan di komentar `deriveRank()` supaya bisa didebat/diubah kalau kamu mau angka lain.
+
+**Catatan Fase 3 item 4 (Agent runtime 4 Ward sisanya):**
+- `lib/agents/research-wright.ts` (Fase 1 item 10, khusus Deepdive/`district === "research"`) **dihapus**, digantikan `lib/agents/wright-runtime.ts` yang generik untuk kelima Ward -- fungsi utamanya sekarang `runWardJob(jobId)`, bukan `runResearchJob(jobId)`.
+- **Migrasi baru `0008_all_wards_live.sql`** (jalankan setelah 0001-0007) mengisi `agents.system_prompt` + `agents.model` (`gemini-3.8-flash`, sama seperti Deepdive) untuk 14 Wright non-Warden yang tersisa: Chain (FLOW, DUNE, GAS), Craft (KILN, TIDE, LOOM), Watch (HOUND, KEYS, LENS), Hearth (WEAVE, PULSE, QUEST), plus 2 sisa Research (OWL, SCOUT) yang belum diisi 0003. Warden (WHALE, FORGE, SNTL, HRBR, dan LUMEN yang sudah diisi lebih dulu di 0002 sebagai Warden Research) sengaja **tidak** diisi -- perannya me-routing, bukan mengerjakan brief.
+- Tiap prompt ditulis mengikuti gaya dan batasan Charter yang sama seperti Deepdive (0003): tidak janji return/rekomendasi beli-jual, tidak mengarang sumber/angka/kutipan, tutup dengan bagian \"Open questions\", nada tenang bukan hype -- disesuaikan per keahlian Wright (mis. Slither Hound/$HOUND fokus pola risiko kontrak, Dune Smith/$DUNE fokus desain dashboard, dst).
+- `app/api/jobs/route.ts` dan `app/api/jobs/[id]/revise/route.ts` diubah: sebelumnya cuma memanggil runtime kalau `district === \"research\"`, sekarang memanggil `runWardJob()` tanpa syarat district -- job Ward mana pun sekarang langsung dikerjakan, bukan diam di `open` selamanya seperti sebelumnya.
+- Auto-retry Gemini (503/429, sampai 4 percobaan + model cadangan opsional lewat `GEMINI_FALLBACK_MODEL`) yang sudah ada di `lib/agents/gemini.ts` dari sesi sebelumnya otomatis ikut berlaku untuk kelima Ward -- tidak perlu diubah, cuma dipanggil lebih sering sekarang.
+- **Belum dikerjakan (di luar cakupan item 4):** tombol \"Try again\" di UI untuk job yang gagal di percobaan pertama -- jalan keluarnya tetap Send back (kalau job itu sudah pernah berhasil sekali) atau posting ulang job baru.
+
+**Catatan Fase 3 item 5 (Routing per Ward oleh Warden):**
+- **`selectWright(supabase, district)`** baru di `wright-runtime.ts` -- dipanggil `runWardJob()` setiap kali job baru (belum punya `agent_id`) butuh di-assign. Sebelumnya satu Ward = satu Wright tetap (mis. Research Ward selalu jatuh ke Deepdive, walau ada OWL dan SCOUT yang menganggur); sekarang Warden benar-benar \"membagi kerja\".
+- Kriteria (didokumentasikan di komentar fungsi karena tidak ada spek persis di brief): (1) Wright non-Warden dengan job `working` aktif paling sedikit menang -- paling idle duluan; (2) seri → rank tertinggi (`deriveRank`, item 3) menang; (3) seri lagi → ticker alfabetis, supaya hasilnya stabil dan bisa diprediksi.
+- Query dibatasi ke agents+jobs **dalam satu Ward saja** (biasanya 3-4 Wright non-Warden), bukan seluruh kota -- cukup murah untuk dijalankan tiap job baru tanpa index tambahan.
+- **Send back tidak memicu routing ulang** -- job yang sudah punya `agent_id` selalu dikerjakan ulang oleh Wright yang sama, `selectWright()` cuma dipanggil untuk job yang benar-benar baru.
+- **Keterbatasan diketahui (belum diperbaiki):** `selectWright()` membaca jumlah job aktif dengan satu query lalu meng-assign lewat query terpisah -- kalau dua job baru di Ward yang sama dibuat dalam request yang benar-benar tumpang tindih (race), keduanya bisa membaca \"0 job aktif\" yang sama dan terpilih Wright yang sama. Ini bukan bug keamanan (wage tetap aman di Strongbox), cuma beban kerja Ward jadi sedikit tidak merata di kondisi race yang jarang -- belum diperbaiki dengan locking/transaction.
+
+**✅ Diverifikasi sungguhan sesi ini:** `npm install` + `npx tsc --noEmit` nol error, `eslint` bersih di semua file yang diubah/ditambah, `next build` lulus (16 route, sama seperti sebelumnya -- tidak ada route baru di item ini). Font Google di-stub sementara untuk verifikasi build (sandbox tidak ada akses `fonts.googleapis.com`), layout asli sudah dikembalikan persis seperti sebelumnya (dicek dengan `diff`). Logika `deriveRank`/`deriveAgentStats` diuji langsung lewat `tsx` di luar Next.js (lihat nilai uji di respons sesi ini) -- bukan lewat Supabase sungguhan, karena sandbox ini tidak punya akses ke project Supabase kamu.
+
+**BELUM diverifikasi:** (1) `runWardJob`/`selectWright` terhadap Supabase sungguhan -- jalankan migrasi `0008` lalu coba Post a Job di keempat Ward yang baru hidup (Chain/Craft/Watch/Hearth) dan pastikan job bergerak `open → working → review`, bukan diam seperti sebelumnya; (2) kalau ada lebih dari satu Wright idle di satu Ward, coba Post beberapa job berurutan dan lihat apakah assignment-nya bergantian (bukan selalu Wright yang sama); (3) chip rank di Wright Profile/City Dashboard/Job Detail -- pastikan tampil \"Apprentice\" untuk semua Wright non-Warden sampai ada job `paid` sungguhan (perilaku yang disengaja, lihat catatan item 3), bukan error.
 
 ---
 
@@ -232,15 +260,16 @@ Satu warning linter sempat muncul (`event emitted after an external call` di `Wa
 ---
 
 ## Ringkasan angka
-- **Selesai:** 15 dari ±44 item total *(Fase 0 + seluruh 11 langkah Fase 1 + Fase 2 item 1, 2, 3 & 5)*, plus item 4 dirintis (script jadi & direhearsal penuh, belum broadcast sungguhan)
+- **Selesai:** 18 dari ±44 item total *(Fase 0 + seluruh 11 langkah Fase 1 + Fase 2 item 1, 2, 3 & 5 + Fase 3 item 3, 4 & 5)*, plus Fase 2 item 4 dirintis (script jadi & direhearsal penuh, belum broadcast sungguhan)
 - **Fase 1: selesai semua (11/11)** ✅
-- **Fase 2: 4/8 selesai dan terverifikasi (item 1, 2, 3, 5), item 4, 6, 7, 8 sebagian** *(46/46 test Forge lulus + `slither .` nol temuan + deploy script direhearsal penuh di Anvil lokal -- semua dijalankan sungguhan sesi ini, lihat catatan di atas)*
-- **Belum tersentuh sama sekali:** Fase 3, 4, track Legal & Brand, Launch Foundry
+- **Fase 2: 4/8 selesai dan terverifikasi (item 1, 2, 3, 5), item 4, 6, 7, 8 sebagian** *(46/46 test Forge lulus + `slither .` nol temuan + deploy script direhearsal penuh di Anvil lokal)*
+- **Fase 3: 3/5 selesai dan terverifikasi (item 3, 4, 5)** *(`tsc`/`eslint`/`next build` lulus sesi ini -- lihat catatan di atas; belum diverifikasi terhadap Supabase sungguhan)*, item 1-2 (`WageholdRegistry`, daftarkan Wright on-chain) belum disentuh
+- **Belum tersentuh sama sekali:** Fase 4, track Legal & Brand, Launch Foundry
 
 Kandidat lanjutan:
-- **Perbaiki bug Splitter + dispute parsial** (temuan item 8): ubah kontrak + tes Forge + redeploy; jalankan ulang `npm run e2e:local -- --with-finding` sampai S5 lulus tanpa temuan.
-- **Fase 2 item 4 (sisa)** -- broadcast sungguhan ke Robinhood Chain testnet: isi `contracts/.env` (API key Alchemy dari [dashboard.alchemy.com](https://dashboard.alchemy.com/signup), wallet testnet berisi ETH faucet), lalu `forge script script/Deploy.s.sol --rpc-url robinhood_testnet --broadcast --verify --verifier blockscout --verifier-url https://explorer.testnet.chain.robinhood.com/api` dari mesin dengan akses jaringan ke domain itu (sandbox sesi ini tidak punya). Script-nya sendiri sudah selesai & direhearsal, lihat `contracts/DEPLOY_REHEARSAL.md`.
-- **Fase 3 item 4** -- runtime agent untuk 4 Ward sisanya (Chain, Craft, Watch, Hearth), polanya sudah ada dari `research-wright.ts` + `gemini.ts`.
-- **Fase 3 item 5** -- routing multi-Wright per Ward (Warden membagi kerja, bukan selalu satu Wright tetap).
+- **Jalankan migrasi `0008_all_wards_live.sql` di Supabase kamu**, lalu coba Post a Job di salah satu Ward selain Research (Chain/Craft/Watch/Hearth) untuk membuktikan item 4-5 sungguhan di luar sandbox ini (lihat "BELUM diverifikasi" di catatan item 5).
+- **Perbaiki bug Splitter + dispute parsial** (temuan Fase 2 item 8): ubah kontrak + tes Forge + redeploy; jalankan ulang `npm run e2e:local -- --with-finding` sampai S5 lulus tanpa temuan.
+- **Fase 2 item 4 (sisa)** -- broadcast sungguhan ke Robinhood Chain testnet: isi `contracts/.env` (API key Alchemy, wallet testnet berisi ETH faucet), lalu `forge script script/Deploy.s.sol --rpc-url robinhood_testnet --broadcast --verify --verifier blockscout --verifier-url https://explorer.testnet.chain.robinhood.com/api` dari mesin dengan akses jaringan ke domain itu. Script-nya sendiri sudah selesai & direhearsal, lihat `contracts/DEPLOY_REHEARSAL.md`.
+- **Fase 3 item 1-2** -- kontrak `WageholdRegistry` + daftarkan 20 Wright on-chain, ditunda sampai kamu siap keluar dari mode simulasi (sama seperti Fase 2 item 4).
 
 Mau saya lanjut ke salah satu di atas, atau ada prioritas lain?

@@ -1,9 +1,15 @@
 'use client';
 
+import { WAGE_SYMBOL } from '@/lib/currency';
 import { useMemo, useState } from 'react';
 import { CityScene, type CityAgent } from '@/components/city-scene';
 import { StatBar } from '@/components/stat-bar';
 import { WrightProfilePanel } from '@/components/wright-profile-panel';
+import {
+  deriveAgentStats,
+  deriveRank,
+  deriveWardStats,
+} from '@/lib/agent-stats';
 import { JobBoard, type JobBoardItem } from '@/components/job-board';
 import { Panel, PanelHeader } from '@/components/ui/panel';
 import { SiteNav } from '@/components/site-nav';
@@ -52,6 +58,9 @@ interface DashboardJob {
   clientId: string;
   /** Tx hash escrow on-chain -- dipakai Set the seal untuk memilih alur wallet vs simulasi. */
   escrowTx: string | null;
+  /** Rating 1-5 dari client saat set-the-seal (0007_job_rating.sql), null
+   *  kalau belum di-rate. Dipakai deriveAgentStats() untuk Client rating. */
+  rating: number | null;
 }
 
 interface DashboardEvent {
@@ -130,6 +139,7 @@ export function RealtimeCityDashboard({
       progress: row.progress,
       clientId: row.client_id,
       escrowTx: row.escrow_tx,
+      rating: row.rating,
     };
     setJobs((prev) => {
       const idx = prev.findIndex((j) => j.id === next.id);
@@ -173,16 +183,47 @@ export function RealtimeCityDashboard({
     return map;
   }, [jobs]);
 
+  // Sealed jobs, revenue & rating per agent dari job `paid` sungguhan (lihat
+  // lib/agent-stats.ts) -- dipakai untuk tinggi gedung dan Wright profile,
+  // bukan lagi agents.revenue_30d / jobs_sealed / rating (angka demo seed).
+  const statsByAgent = useMemo(() => {
+    const map = new Map<
+      string,
+      { jobsSealed: number; revenue30d: number; rating: number }
+    >();
+    for (const a of agents) {
+      map.set(a.id, deriveAgentStats(jobs.filter((j) => j.agentId === a.id)));
+    }
+    return map;
+  }, [agents, jobs]);
+
+  // Statistik per Ward -- dipakai untuk profil Warden saja. Warden tidak
+  // pernah punya job sendiri (selectWright() melewati is_lead), jadi angkanya
+  // diwakili seluruh Ward (lihat deriveWardStats). Sengaja TIDAK dipakai untuk
+  // tinggi gedung di kota (cityAgents di bawah tetap dari job miliknya
+  // sendiri) supaya gedung Warden tidak menjulang 4x lipat gedung Wright.
+  const statsByDistrict = useMemo(() => {
+    const map = new Map<
+      DistrictId,
+      { jobsSealed: number; revenue30d: number; rating: number }
+    >();
+    const districts = new Set(agents.map((a) => a.district));
+    for (const d of districts) {
+      map.set(d, deriveWardStats(jobs.filter((j) => j.district === d)));
+    }
+    return map;
+  }, [agents, jobs]);
+
   const cityAgents: CityAgent[] = useMemo(
     () =>
       agents.map((a) => ({
         id: a.id,
         ticker: a.ticker,
         district: a.district,
-        revenue30d: a.revenue30d,
+        revenue30d: statsByAgent.get(a.id)?.revenue30d ?? 0,
         status: statusByAgent.get(a.id) ?? 'idle',
       })),
-    [agents, statusByAgent],
+    [agents, statsByAgent, statusByAgent],
   );
 
   const sealedCount = useMemo(
@@ -247,21 +288,35 @@ export function RealtimeCityDashboard({
   const selectedAgent: AgentDetail | null = useMemo(() => {
     const a = agents.find((x) => x.id === selectedId);
     if (!a) return null;
+    // Sealed jobs, revenue & rating dihitung dari baris `jobs` yang benar-benar
+    // ada di database, supaya angkanya cocok dengan daftar Sealed jobs di
+    // bawahnya dan dengan tinggi gedungnya di kota (kolom agents.* masih demo).
+    const ownStats = statsByAgent.get(a.id) ?? {
+      jobsSealed: 0,
+      revenue30d: 0,
+      rating: 0,
+    };
+    // Warden: agregat seluruh Ward, bukan job miliknya sendiri (selalu 0).
+    const stats = a.isLead
+      ? (statsByDistrict.get(a.district) ?? ownStats)
+      : ownStats;
     return {
       id: a.id,
       name: a.name,
       ticker: a.ticker,
       district: a.district,
-      rank: a.rank,
+      // Fase 3 item 3: rank dari sealed jobs + rating sungguhan (lihat
+      // catatan di lib/agent-stats.ts) -- Warden tetap dari a.rank/isLead.
+      rank: a.isLead ? a.rank : deriveRank(stats.jobsSealed, stats.rating),
       isLead: a.isLead,
       status: statusByAgent.get(a.id) ?? 'idle',
-      revenue30d: a.revenue30d,
+      revenue30d: stats.revenue30d,
       description: a.description,
       holders: a.holders,
-      rating: a.rating,
-      jobsSealed: a.jobsSealed,
+      rating: stats.rating,
+      jobsSealed: stats.jobsSealed,
     };
-  }, [agents, selectedId, statusByAgent]);
+  }, [agents, selectedId, statsByAgent, statsByDistrict, statusByAgent]);
 
   const toSummary = (j: DashboardJob, ticker: string): JobSummary => ({
     id: j.id,
@@ -285,11 +340,23 @@ export function RealtimeCityDashboard({
 
   const sealedJobs: JobSummary[] = useMemo(() => {
     if (!selectedAgent) return [];
+    // Warden: daftar Sealed jobs = seluruh Ward (cocok dengan angka agregat
+    // di atasnya), tiap baris memakai ticker Wright yang mengerjakannya.
+    const belongs = (j: DashboardJob) =>
+      selectedAgent.isLead
+        ? j.district === selectedAgent.district && j.agentId != null
+        : j.agentId === selectedAgent.id;
     return jobs
-      .filter((j) => j.agentId === selectedAgent.id && j.status === 'paid')
+      .filter((j) => belongs(j) && j.status === 'paid')
       .slice(0, 5)
-      .map((j) => toSummary(j, selectedAgent.ticker));
-  }, [jobs, selectedAgent]);
+      .map((j) =>
+        toSummary(
+          j,
+          (j.agentId ? agentTickers[j.agentId] : undefined) ??
+            selectedAgent.ticker,
+        ),
+      );
+  }, [jobs, selectedAgent, agentTickers]);
 
   const jobTitleById = useMemo(
     () => new Map(jobs.map((j) => [j.id, j.title])),
@@ -323,11 +390,11 @@ export function RealtimeCityDashboard({
           stats={[
             {
               label: 'Counting House',
-              value: `${Math.round(estimatedTithe).toLocaleString('en-US')} USDC`,
+              value: `${Math.round(estimatedTithe).toLocaleString('en-US')} ${WAGE_SYMBOL}`,
             },
             {
               label: 'In the Strongbox',
-              value: `${inStrongbox.toLocaleString('en-US')} USDC`,
+              value: `${inStrongbox.toLocaleString('en-US')} ${WAGE_SYMBOL}`,
               gold: true,
             },
             { label: 'Sealed jobs', value: String(sealedCount) },

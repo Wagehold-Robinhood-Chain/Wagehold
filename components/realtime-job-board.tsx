@@ -1,14 +1,18 @@
-"use client";
+'use client';
 
-import { useMemo, useState } from "react";
-import { JobBoard, type JobBoardItem } from "@/components/job-board";
-import { SiteNav } from "@/components/site-nav";
-import { AuthStatus } from "@/components/auth-status";
-import { WalletConnect } from "@/components/wallet-connect";
-import { useRealtimeChanges } from "@/lib/supabase/realtime";
-import { useCurrentUserId } from "@/lib/supabase/use-current-user-id";
-import type { DistrictId, JobStatus } from "@/types/domain";
-import { MotionPage, MotionHeader, MotionFooter } from "@/components/motion/primitives";
+import { useMemo, useState } from 'react';
+import { JobBoard, type JobBoardItem } from '@/components/job-board';
+import { SiteNav } from '@/components/site-nav';
+import { AuthStatus } from '@/components/auth-status';
+import { WalletConnect } from '@/components/wallet-connect';
+import { useRealtimeChanges } from '@/lib/supabase/realtime';
+import { useCurrentUserId } from '@/lib/supabase/use-current-user-id';
+import type { DistrictId, JobStatus } from '@/types/domain';
+import {
+  MotionPage,
+  MotionHeader,
+  MotionFooter,
+} from '@/components/motion/primitives';
 
 interface RawJob {
   id: string;
@@ -49,9 +53,12 @@ export function RealtimeJobBoard({
   const [jobs, setJobs] = useState(initialJobs);
   const userId = useCurrentUserId(initialUserId);
 
-  useRealtimeChanges("jobs", (payload) => {
-    if (payload.eventType === "DELETE") return; // job tidak pernah dihapus lewat alur produk
+  useRealtimeChanges('jobs', (payload) => {
+    if (payload.eventType === 'DELETE') return; // job tidak pernah dihapus lewat alur produk
     const row = payload.new;
+    // Job Board per akun: abaikan job milik client lain (tabel `jobs` publik,
+    // jadi Realtime tetap mengirim semua baris ke browser).
+    if (!userId || row.client_id !== userId) return;
     const next: RawJob = {
       id: row.id,
       title: row.title,
@@ -74,32 +81,38 @@ export function RealtimeJobBoard({
 
   const items: JobBoardItem[] = useMemo(
     () =>
-      jobs.map((j) => ({
-        job: {
-          id: j.id,
-          title: j.title,
-          district: j.district,
-          agentTicker: j.agentId ? agentTickers[j.agentId] : undefined,
-          budgetUsdc: j.budgetUsdc,
-          status: j.status,
-          progress: j.progress,
-          escrowTx: j.escrowTx,
-        },
-        // Gerbang seal (Article I): hanya client pemilik job yang melihat
-        // "Set the seal" / "Send back" -- keputusan sesungguhnya tetap di
-        // server (Route Handler approve/revise mengecek auth.getUser()
-        // sendiri), ini cuma menentukan tombol mana yang ditampilkan.
-        isOwnJob: !!userId && j.clientId === userId,
-      })),
-    [jobs, agentTickers, userId]
+      jobs
+        .filter((j) => !!userId && j.clientId === userId)
+        .map((j) => ({
+          job: {
+            id: j.id,
+            title: j.title,
+            district: j.district,
+            agentTicker: j.agentId ? agentTickers[j.agentId] : undefined,
+            budgetUsdc: j.budgetUsdc,
+            status: j.status,
+            progress: j.progress,
+            escrowTx: j.escrowTx,
+          },
+          // Gerbang seal (Article I): hanya client pemilik job yang melihat
+          // "Set the seal" / "Send back" -- keputusan sesungguhnya tetap di
+          // server (Route Handler approve/revise mengecek auth.getUser()
+          // sendiri), ini cuma menentukan tombol mana yang ditampilkan.
+          isOwnJob: !!userId && j.clientId === userId,
+        })),
+    [jobs, agentTickers, userId],
   );
 
   return (
     <MotionPage className="flex h-screen flex-col gap-3 p-3">
       <MotionHeader className="flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-xl font-bold tracking-tight">Wagehold</h1>
+        <h1 className="font-display text-xl font-bold tracking-tight">
+          Wagehold
+        </h1>
         <SiteNav />
-        <p className="text-[13px] italic text-muted">Work sealed. Wages shared.</p>
+        <p className="text-[13px] italic text-muted">
+          Work sealed. Wages shared.
+        </p>
         <AuthStatus />
         <WalletConnect />
       </MotionHeader>

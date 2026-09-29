@@ -1,6 +1,6 @@
-import { createClient } from "@/lib/supabase/server";
-import { listAgents, listJobs, listRecentEvents } from "@/lib/supabase/queries";
-import { RealtimeCityDashboard } from "@/components/realtime-city-dashboard";
+import { createClient } from '@/lib/supabase/server';
+import { listAgents, listJobs, listRecentEvents } from '@/lib/supabase/queries';
+import { RealtimeCityDashboard } from '@/components/realtime-city-dashboard';
 
 // Render awal saja -- setelah mount, RealtimeCityDashboard mendengar
 // perubahan lewat Supabase Realtime (Item 11), bukan lagi lewat polling.
@@ -52,6 +52,7 @@ export default async function Home() {
         progress: j.progress,
         clientId: j.client_id,
         escrowTx: j.escrow_tx,
+        rating: j.rating,
       }))}
       initialEvents={events.map((e) => ({
         id: e.id,

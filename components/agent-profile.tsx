@@ -1,14 +1,15 @@
-import Link from "next/link";
-import { JobCard } from "@/components/job-card";
-import { RevenueSplit } from "@/components/revenue-split";
-import { Panel, PanelHeader, PanelScroll } from "@/components/ui/panel";
-import { EmptyState } from "@/components/ui/empty-state";
-import { Chip } from "@/components/ui/chip";
-import { Button } from "@/components/ui/button";
-import { StatusPill } from "@/components/ui/status-pill";
-import { StatBar } from "@/components/stat-bar";
-import { WARD_LABEL, RANK_LABEL } from "@/types/domain";
-import type { AgentDetail, JobSummary } from "@/types/domain";
+import { WAGE_SYMBOL } from '@/lib/currency';
+import Link from 'next/link';
+import { JobCard } from '@/components/job-card';
+import { RevenueSplit } from '@/components/revenue-split';
+import { Panel, PanelHeader, PanelScroll } from '@/components/ui/panel';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Chip } from '@/components/ui/chip';
+import { Button } from '@/components/ui/button';
+import { StatusPill } from '@/components/ui/status-pill';
+import { StatBar } from '@/components/stat-bar';
+import { WARD_LABEL, RANK_LABEL } from '@/types/domain';
+import type { AgentDetail, JobSummary } from '@/types/domain';
 
 // Split tetap sesuai Charter Article VI/VII/VIII (lore file §6) -- bukan
 // per-agent, jadi tidak datang dari tabel agents.
@@ -39,7 +40,9 @@ export function AgentProfile({
           <div className="flex flex-wrap items-center gap-2">
             <Chip variant="ticker">${agent.ticker}</Chip>
             <Chip>{WARD_LABEL[agent.district]}</Chip>
-            <Chip variant="rank">{agent.isLead ? "Warden" : RANK_LABEL[agent.rank]}</Chip>
+            <Chip variant="rank">
+              {agent.isLead ? 'Warden' : RANK_LABEL[agent.rank]}
+            </Chip>
             <StatusPill status={agent.status} />
           </div>
 
@@ -48,13 +51,13 @@ export function AgentProfile({
           <StatBar
             stats={[
               {
-                label: "Revenue (30d)",
-                value: `${Math.round(agent.revenue30d).toLocaleString("en-US")} USDC`,
+                label: 'Revenue (30d)',
+                value: `${Math.round(agent.revenue30d).toLocaleString('en-US')} ${WAGE_SYMBOL}`,
                 gold: true,
               },
-              { label: "Patrons", value: String(agent.holders) },
-              { label: "Rating", value: agent.rating.toFixed(1) },
-              { label: "Sealed jobs", value: String(agent.jobsSealed) },
+              { label: 'Patrons', value: String(agent.holders) },
+              { label: 'Rating', value: agent.rating.toFixed(1) },
+              { label: 'Sealed jobs', value: String(agent.jobsSealed) },
             ]}
           />
         </div>
@@ -68,10 +71,16 @@ export function AgentProfile({
       </Panel>
 
       <Panel>
-        <PanelHeader title="Sealed jobs" />
+        <PanelHeader
+          title={agent.isLead ? 'Sealed jobs (whole Ward)' : 'Sealed jobs'}
+        />
         <PanelScroll className="max-h-96">
           {sealedJobs.length === 0 ? (
-            <EmptyState>No sealed jobs yet -- still proving itself.</EmptyState>
+            <EmptyState>
+              {agent.isLead
+                ? 'No sealed jobs in this Ward yet.'
+                : 'No sealed jobs yet -- still proving itself.'}
+            </EmptyState>
           ) : (
             <div className="flex flex-col">
               {sealedJobs.map((job) => (

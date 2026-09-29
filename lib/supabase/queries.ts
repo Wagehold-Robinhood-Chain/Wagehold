@@ -1,6 +1,7 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/types/database";
-import type { JobStatus } from "@/types/enums";
+import { WAGE_SYMBOL } from '@/lib/currency';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/types/database';
+import type { DistrictId, JobStatus } from '@/types/enums';
 
 type Client = SupabaseClient<Database>;
 
@@ -23,17 +24,23 @@ export interface RecentEvent {
  *  Query 2 langkah (bukan embedded select) dengan alasan yang sama seperti
  *  attachAgentTickers -- types/database.ts belum punya tipe relasi hasil
  *  `supabase gen types`. */
-export async function listRecentEvents(supabase: Client, limit = 20): Promise<RecentEvent[]> {
+export async function listRecentEvents(
+  supabase: Client,
+  limit = 20,
+): Promise<RecentEvent[]> {
   const { data: events } = await supabase
-    .from("job_events")
-    .select("*")
-    .order("at", { ascending: false })
+    .from('job_events')
+    .select('*')
+    .order('at', { ascending: false })
     .limit(limit);
 
   if (!events || events.length === 0) return [];
 
   const jobIds = [...new Set(events.map((e) => e.job_id))];
-  const { data: jobs } = await supabase.from("jobs").select("id, title").in("id", jobIds);
+  const { data: jobs } = await supabase
+    .from('jobs')
+    .select('id, title')
+    .in('id', jobIds);
   const titleById = new Map((jobs ?? []).map((j) => [j.id, j.title]));
 
   return events.map((e) => ({
@@ -43,18 +50,21 @@ export async function listRecentEvents(supabase: Client, limit = 20): Promise<Re
     actor: e.actor,
     type: e.type,
     note: e.note,
-    job_title: titleById.get(e.job_id) ?? "a job",
+    job_title: titleById.get(e.job_id) ?? 'a job',
   }));
 }
 
 // --- Agents -----------------------------------------------------------
 
 export async function listAgents(supabase: Client) {
-  return supabase.from("agents").select("*").order("revenue_30d", { ascending: false });
+  return supabase
+    .from('agents')
+    .select('*')
+    .order('revenue_30d', { ascending: false });
 }
 
 export async function getAgentById(supabase: Client, id: string) {
-  return supabase.from("agents").select("*").eq("id", id).single();
+  return supabase.from('agents').select('*').eq('id', id).single();
 }
 
 /** Semua job milik satu Wright (agent_id = id), terbaru dulu. Dipakai Page E
@@ -63,22 +73,53 @@ export async function getAgentById(supabase: Client, id: string) {
  *  sudah diketahui dari agent yang sama. */
 export async function listJobsByAgent(supabase: Client, agentId: string) {
   return supabase
-    .from("jobs")
-    .select("*")
-    .eq("agent_id", agentId)
-    .order("created_at", { ascending: false });
+    .from('jobs')
+    .select('*')
+    .eq('agent_id', agentId)
+    .order('created_at', { ascending: false });
+}
+
+/** Semua job dalam satu Ward (district), terbaru dulu. Dipakai profil Warden
+ *  (Page E) untuk statistik agregat Ward -- Warden sendiri tidak punya job
+ *  (lihat deriveWardStats di lib/agent-stats.ts). */
+export async function listJobsByDistrict(
+  supabase: Client,
+  district: DistrictId,
+) {
+  return supabase
+    .from('jobs')
+    .select('*')
+    .eq('district', district)
+    .order('created_at', { ascending: false });
+}
+
+/** Semua agent dalam satu Ward -- untuk memetakan agent_id -> ticker. */
+export async function listAgentsByDistrict(
+  supabase: Client,
+  district: DistrictId,
+) {
+  return supabase.from('agents').select('*').eq('district', district);
 }
 
 // --- Jobs ---------------------------------------------------------------
 
-export async function listJobs(supabase: Client, statuses?: JobStatus[]) {
+export async function listJobs(
+  supabase: Client,
+  statuses?: JobStatus[],
+  /** Kalau diisi, hanya job milik client ini (Job Board per akun). */
+  clientId?: string,
+) {
   let query = supabase
-    .from("jobs")
-    .select("*")
-    .order("created_at", { ascending: false });
+    .from('jobs')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (clientId) {
+    query = query.eq('client_id', clientId);
+  }
 
   if (statuses && statuses.length > 0) {
-    query = query.in("status", statuses);
+    query = query.in('status', statuses);
   }
 
   const jobsRes = await query;
@@ -88,15 +129,17 @@ export async function listJobs(supabase: Client, statuses?: JobStatus[]) {
 }
 
 export async function getJobById(supabase: Client, id: string) {
-  const jobRes = await supabase.from("jobs").select("*").eq("id", id).single();
+  const jobRes = await supabase.from('jobs').select('*').eq('id', id).single();
 
   const eventsRes = await supabase
-    .from("job_events")
-    .select("*")
-    .eq("job_id", id)
-    .order("at", { ascending: true });
+    .from('job_events')
+    .select('*')
+    .eq('job_id', id)
+    .order('at', { ascending: true });
 
-  const [job] = jobRes.data ? await attachAgentTickers(supabase, [jobRes.data]) : [];
+  const [job] = jobRes.data
+    ? await attachAgentTickers(supabase, [jobRes.data])
+    : [];
 
   return {
     job: job ?? jobRes.data,
@@ -112,19 +155,24 @@ export async function getJobById(supabase: Client, id: string) {
  *  aman dipakai setelah tipe itu digenerate dari schema sungguhan. */
 async function attachAgentTickers<T extends { agent_id: string | null }>(
   supabase: Client,
-  jobs: T[]
+  jobs: T[],
 ): Promise<(T & { agent_ticker: string | null })[]> {
-  const agentIds = [...new Set(jobs.map((j) => j.agent_id).filter((id): id is string => !!id))];
+  const agentIds = [
+    ...new Set(jobs.map((j) => j.agent_id).filter((id): id is string => !!id)),
+  ];
   if (agentIds.length === 0) {
     return jobs.map((j) => ({ ...j, agent_ticker: null }));
   }
 
-  const { data: agents } = await supabase.from("agents").select("id, ticker").in("id", agentIds);
+  const { data: agents } = await supabase
+    .from('agents')
+    .select('id, ticker')
+    .in('id', agentIds);
   const tickerById = new Map((agents ?? []).map((a) => [a.id, a.ticker]));
 
   return jobs.map((j) => ({
     ...j,
-    agent_ticker: j.agent_id ? tickerById.get(j.agent_id) ?? null : null,
+    agent_ticker: j.agent_id ? (tickerById.get(j.agent_id) ?? null) : null,
   }));
 }
 
@@ -140,7 +188,7 @@ export interface CreateJobInput {
   id?: string;
   title: string;
   brief: string;
-  district: Database["public"]["Tables"]["jobs"]["Row"]["district"];
+  district: Database['public']['Tables']['jobs']['Row']['district'];
   budgetUsdc: number;
   /** Tx hash `createJob` di WageholdStrongbox -- hanya diisi lewat alur
    *  Fase 2 item 6 (on-chain sungguhan), null di alur simulasi lama. */
@@ -157,10 +205,10 @@ export async function createJob(
    *  ke `jobs`, jadi insert hanya lewat sini setelah route memverifikasi user. */
   admin: Client,
   clientId: string,
-  input: CreateJobInput
+  input: CreateJobInput,
 ) {
   const jobRes = await admin
-    .from("jobs")
+    .from('jobs')
     .insert({
       ...(input.id ? { id: input.id } : {}),
       title: input.title,
@@ -169,7 +217,7 @@ export async function createJob(
       budget_usdc: input.budgetUsdc,
       client_id: clientId,
       escrow_tx: input.escrowTx ?? null,
-      status: "open",
+      status: 'open',
       progress: 0,
     })
     .select()
@@ -177,13 +225,13 @@ export async function createJob(
 
   if (jobRes.error || !jobRes.data) return jobRes;
 
-  await admin.from("job_events").insert({
+  await admin.from('job_events').insert({
     job_id: jobRes.data.id,
-    actor: "client",
-    type: "job_created",
+    actor: 'client',
+    type: 'job_created',
     note: input.escrowTx
-      ? `Wage of ${input.budgetUsdc} USDC locked in the Strongbox on-chain.`
-      : `Wage of ${input.budgetUsdc} USDC locked in the Strongbox (simulated -- escrow on-chain belum dikonfigurasi)`,
+      ? `Wage of ${input.budgetUsdc} ${WAGE_SYMBOL} locked in the Strongbox on-chain.`
+      : `Wage of ${input.budgetUsdc} ${WAGE_SYMBOL} locked in the Strongbox (simulated -- escrow on-chain belum dikonfigurasi)`,
     tx: input.escrowTx ?? null,
   });
 
@@ -214,22 +262,34 @@ export async function approveJob(
   admin: Client,
   jobId: string,
   userId: string,
-  onChain?: ApproveOnChainOptions
+  onChain?: ApproveOnChainOptions,
+  /** Rating 1-5 opsional dari client -- dipakai untuk Client rating Wright
+   *  (lib/agent-stats.ts). Tidak wajib: job tetap bisa di-seal tanpa rating. */
+  rating?: number,
 ) {
   const { data: job, error: fetchError } = await supabase
-    .from("jobs")
-    .select("*")
-    .eq("id", jobId)
+    .from('jobs')
+    .select('*')
+    .eq('id', jobId)
     .single();
 
   if (fetchError || !job) {
-    return { error: fetchError?.message ?? "Job not found", status: 404 as const };
+    return {
+      error: fetchError?.message ?? 'Job not found',
+      status: 404 as const,
+    };
   }
   if (job.client_id !== userId) {
-    return { error: "Only the client who posted this job can set the seal", status: 403 as const };
+    return {
+      error: 'Only the client who posted this job can set the seal',
+      status: 403 as const,
+    };
   }
-  if (job.status !== "review") {
-    return { error: `Job is '${job.status}', not awaiting seal`, status: 409 as const };
+  if (job.status !== 'review') {
+    return {
+      error: `Job is '${job.status}', not awaiting seal`,
+      status: 409 as const,
+    };
   }
 
   const patronShare = Math.round(job.budget_usdc * 0.7 * 100) / 100;
@@ -237,44 +297,48 @@ export async function approveJob(
   // `.eq("status", "review")` + cek baris terdampak = penjaga atomik: dua request
   // seal bersamaan tidak bisa sama-sama lolos dan mengkredit revenue dua kali.
   const { data: updated, error: updateError } = await admin
-    .from("jobs")
-    .update({ status: "paid", progress: 100 })
-    .eq("id", jobId)
-    .eq("status", "review")
-    .select("id");
+    .from('jobs')
+    .update({
+      status: 'paid',
+      progress: 100,
+      ...(rating !== undefined ? { rating } : {}),
+    })
+    .eq('id', jobId)
+    .eq('status', 'review')
+    .select('id');
 
   if (updateError) return { error: updateError.message, status: 500 as const };
   if (!updated || updated.length === 0) {
-    return { error: "Job is no longer awaiting seal", status: 409 as const };
+    return { error: 'Job is no longer awaiting seal', status: 409 as const };
   }
 
   const writer = admin;
 
   if (job.agent_id) {
     const { data: agent } = await writer
-      .from("agents")
-      .select("revenue_30d, jobs_sealed")
-      .eq("id", job.agent_id)
+      .from('agents')
+      .select('revenue_30d, jobs_sealed')
+      .eq('id', job.agent_id)
       .single();
 
     if (agent) {
       await writer
-        .from("agents")
+        .from('agents')
         .update({
           revenue_30d: Number(agent.revenue_30d) + patronShare,
           jobs_sealed: agent.jobs_sealed + 1,
         })
-        .eq("id", job.agent_id);
+        .eq('id', job.agent_id);
     }
   }
 
-  await writer.from("job_events").insert({
+  await writer.from('job_events').insert({
     job_id: jobId,
-    actor: "client",
-    type: "sealed",
+    actor: 'client',
+    type: 'sealed',
     note: onChain
-      ? `Set the seal on-chain. ${job.budget_usdc} USDC released from the Strongbox.`
-      : `Set the seal. ${patronShare} USDC released to Patrons.`,
+      ? `Set the seal on-chain. ${job.budget_usdc} ${WAGE_SYMBOL} released from the Strongbox.`
+      : `Set the seal. ${patronShare} ${WAGE_SYMBOL} released to Patrons.`,
     tx: onChain?.sealTx ?? null,
   });
 
@@ -289,40 +353,49 @@ export async function reviseJob(
   admin: Client,
   jobId: string,
   userId: string,
-  note: string
+  note: string,
 ) {
   const { data: job, error: fetchError } = await supabase
-    .from("jobs")
-    .select("client_id, status, district")
-    .eq("id", jobId)
+    .from('jobs')
+    .select('client_id, status, district')
+    .eq('id', jobId)
     .single();
 
   if (fetchError || !job) {
-    return { error: fetchError?.message ?? "Job not found", status: 404 as const };
+    return {
+      error: fetchError?.message ?? 'Job not found',
+      status: 404 as const,
+    };
   }
   if (job.client_id !== userId) {
-    return { error: "Only the client who posted this job can send it back", status: 403 as const };
+    return {
+      error: 'Only the client who posted this job can send it back',
+      status: 403 as const,
+    };
   }
-  if (job.status !== "review") {
-    return { error: `Job is '${job.status}', not awaiting seal`, status: 409 as const };
+  if (job.status !== 'review') {
+    return {
+      error: `Job is '${job.status}', not awaiting seal`,
+      status: 409 as const,
+    };
   }
 
   const { data: updated, error: updateError } = await admin
-    .from("jobs")
-    .update({ status: "working" })
-    .eq("id", jobId)
-    .eq("status", "review")
-    .select("id");
+    .from('jobs')
+    .update({ status: 'working' })
+    .eq('id', jobId)
+    .eq('status', 'review')
+    .select('id');
 
   if (updateError) return { error: updateError.message, status: 500 as const };
   if (!updated || updated.length === 0) {
-    return { error: "Job is no longer awaiting seal", status: 409 as const };
+    return { error: 'Job is no longer awaiting seal', status: 409 as const };
   }
 
-  await admin.from("job_events").insert({
+  await admin.from('job_events').insert({
     job_id: jobId,
-    actor: "client",
-    type: "sent_back",
+    actor: 'client',
+    type: 'sent_back',
     note,
   });
 

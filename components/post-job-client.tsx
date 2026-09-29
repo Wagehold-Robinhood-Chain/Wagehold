@@ -1,15 +1,20 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { AnimatePresence, motion } from "motion/react";
-import { useAppKit, useAppKitAccount, useAppKitNetwork } from "@reown/appkit/react";
-import { PostJobForm, type PostJobValues } from "@/components/post-job-form";
-import { lockWageOnChain } from "@/lib/web3/lock-wage";
-import { isOnChainEscrowConfigured } from "@/lib/web3/strongbox";
-import { SUPPORTED_CHAIN_IDS } from "@/lib/web3/chains";
-import type { DistrictId } from "@/types/domain";
+import { WAGE_SYMBOL } from '@/lib/currency';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { AnimatePresence, motion } from 'motion/react';
+import {
+  useAppKit,
+  useAppKitAccount,
+  useAppKitNetwork,
+} from '@reown/appkit/react';
+import { PostJobForm, type PostJobValues } from '@/components/post-job-form';
+import { lockWageOnChain } from '@/lib/web3/lock-wage';
+import { isOnChainEscrowConfigured } from '@/lib/web3/strongbox';
+import { SUPPORTED_CHAIN_IDS } from '@/lib/web3/chains';
+import type { DistrictId } from '@/types/domain';
 
 /** Wage yang sudah terkunci on-chain dari percobaan submit sebelumnya yang
  *  gagal di langkah simpan-ke-database (mis. Supabase sempat error). Dipakai
@@ -26,7 +31,11 @@ interface PendingLock {
  *  (Fase 2 item 6) -- mengunci wage sungguhan di WageholdStrongbox lebih
  *  dulu lewat lib/web3/lock-wage.ts sebelum baris job pernah ditulis. Kalau
  *  belum dikonfigurasi, jatuh ke alur simulasi lama tanpa perubahan. */
-export function PostJobClient({ initialDistrict }: { initialDistrict?: DistrictId }) {
+export function PostJobClient({
+  initialDistrict,
+}: {
+  initialDistrict?: DistrictId;
+}) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [submittingLabel, setSubmittingLabel] = useState<string | undefined>();
@@ -51,25 +60,31 @@ export function PostJobClient({ initialDistrict }: { initialDistrict?: DistrictI
         ({ id, escrowTx } = pendingLock);
       } else {
         if (!isConnected || !address) {
-          setError("Connect your wallet first to lock the wage on-chain.");
+          setError('Connect your wallet first to lock the wage on-chain.');
           setNeedsWallet(true);
           setSubmitting(false);
           return;
         }
-        if (typeof chainId === "number" && !SUPPORTED_CHAIN_IDS.has(chainId)) {
-          setError("Switch your wallet to Robinhood Chain first, then post the job again.");
+        if (typeof chainId === 'number' && !SUPPORTED_CHAIN_IDS.has(chainId)) {
+          setError(
+            'Switch your wallet to Robinhood Chain first, then post the job again.',
+          );
           setSubmitting(false);
           return;
         }
 
         try {
           id = crypto.randomUUID();
-          setSubmittingLabel("Approving USDC…");
+          setSubmittingLabel(`Approving ${WAGE_SYMBOL}…`);
           const result = await lockWageOnChain(id, values.budgetUsdc);
           escrowTx = result.txHash;
           setPendingLock({ id, escrowTx, budgetUsdc: values.budgetUsdc });
         } catch (err) {
-          setError(err instanceof Error ? err.message : "Locking the wage on-chain failed");
+          setError(
+            err instanceof Error
+              ? err.message
+              : 'Locking the wage on-chain failed',
+          );
           setSubmitting(false);
           setSubmittingLabel(undefined);
           return;
@@ -77,28 +92,28 @@ export function PostJobClient({ initialDistrict }: { initialDistrict?: DistrictI
       }
     }
 
-    setSubmittingLabel("Saving job…");
+    setSubmittingLabel('Saving job…');
 
     try {
-      const res = await fetch("/api/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...values, ...(id ? { id, escrowTx } : {}) }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "Something went wrong");
+      if (!res.ok) throw new Error(data.error ?? 'Something went wrong');
 
       setPendingLock(null);
       // Job baru langsung terlihat di tab "Open" -- push + refresh supaya
       // Job Board (Server Component) mengambil ulang data.
-      router.push("/jobs");
+      router.push('/jobs');
       router.refresh();
     } catch (err) {
-      const base = err instanceof Error ? err.message : "Something went wrong";
+      const base = err instanceof Error ? err.message : 'Something went wrong';
       setError(
         escrowTx
           ? `Wage already locked on-chain (tx ${escrowTx.slice(0, 10)}…) but saving the job record failed: ${base}. Submit with the same wage amount to retry saving -- it won't lock the wage a second time.`
-          : base
+          : base,
       );
       setSubmitting(false);
       setSubmittingLabel(undefined);
@@ -114,37 +129,37 @@ export function PostJobClient({ initialDistrict }: { initialDistrict?: DistrictI
         initialDistrict={initialDistrict}
       />
       <AnimatePresence>
-      {error && (
-        <motion.p
-          initial={{ opacity: 0, y: -6 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
-          className="border-t border-line px-3.5 py-2 text-[12.5px] text-crit"
-        >
-          {error}
-          {error === "Sign in to post a job" && (
-            <span className="block text-faint">
-              <Link href="/login" className="underline hover:text-muted">
-                Sign in
-              </Link>{" "}
-              first, then post the job again.
-            </span>
-          )}
-          {needsWallet && (
-            <span className="block text-faint">
-              <button
-                type="button"
-                onClick={() => open()}
-                className="underline hover:text-muted"
-              >
-                Connect wallet
-              </button>{" "}
-              first, then post the job again.
-            </span>
-          )}
-        </motion.p>
-      )}
+        {error && (
+          <motion.p
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="border-t border-line px-3.5 py-2 text-[12.5px] text-crit"
+          >
+            {error}
+            {error === 'Sign in to post a job' && (
+              <span className="block text-faint">
+                <Link href="/login" className="underline hover:text-muted">
+                  Sign in
+                </Link>{' '}
+                first, then post the job again.
+              </span>
+            )}
+            {needsWallet && (
+              <span className="block text-faint">
+                <button
+                  type="button"
+                  onClick={() => open()}
+                  className="underline hover:text-muted"
+                >
+                  Connect wallet
+                </button>{' '}
+                first, then post the job again.
+              </span>
+            )}
+          </motion.p>
+        )}
       </AnimatePresence>
     </div>
   );

@@ -1,5 +1,5 @@
-import { erc20Abi, formatUnits } from "viem";
-import { publicClient } from "@/lib/web3/public-client";
+import { erc20Abi, formatUnits } from 'viem';
+import { publicClient } from '@/lib/web3/public-client';
 import {
   computeJobId,
   isOnChainEscrowConfigured,
@@ -7,7 +7,7 @@ import {
   strongboxAddress,
   wageTokenAddress,
   JobStatus,
-} from "@/lib/web3/strongbox";
+} from '@/lib/web3/strongbox';
 
 /**
  * Fase 2 item 6 -- server-side half of the on-chain lock. `POST /api/jobs`
@@ -16,7 +16,7 @@ import {
  * the job straight off `WageholdStrongbox` at the jobId derived from
  * `jobUuid` and confirms it's actually `Open` with a nonzero amount.
  *
- * Returns the wage amount **as read from the chain**, in USDC (human
+ * Returns the wage amount **as read from the chain**, in wage-token units (human
  * units) -- the caller should use this instead of whatever `budgetUsdc` the
  * client sent in the request body, so a client can't claim a bigger wage
  * than what it actually locked.
@@ -24,9 +24,11 @@ import {
  * Throws (with a message safe to surface to the client) if escrow isn't
  * configured, the RPC call fails, or the job isn't in the expected state.
  */
-export async function verifyOnChainLock(jobUuid: string): Promise<{ budgetUsdc: number }> {
+export async function verifyOnChainLock(
+  jobUuid: string,
+): Promise<{ budgetUsdc: number }> {
   if (!isOnChainEscrowConfigured || !strongboxAddress || !wageTokenAddress) {
-    throw new Error("on-chain escrow is not configured on the server");
+    throw new Error('on-chain escrow is not configured on the server');
   }
 
   const onChainJobId = computeJobId(jobUuid);
@@ -35,21 +37,23 @@ export async function verifyOnChainLock(jobUuid: string): Promise<{ budgetUsdc: 
     publicClient.readContract({
       address: strongboxAddress,
       abi: strongboxAbi,
-      functionName: "getJob",
+      functionName: 'getJob',
       args: [onChainJobId],
     }),
     publicClient.readContract({
       address: wageTokenAddress,
       abi: erc20Abi,
-      functionName: "decimals",
+      functionName: 'decimals',
     }),
   ]);
 
   if (job.status !== JobStatus.Open) {
-    throw new Error(`job is not Open on-chain (status=${job.status}) -- was it really locked?`);
+    throw new Error(
+      `job is not Open on-chain (status=${job.status}) -- was it really locked?`,
+    );
   }
   if (job.amount <= BigInt(0)) {
-    throw new Error("job has a zero amount on-chain");
+    throw new Error('job has a zero amount on-chain');
   }
 
   return { budgetUsdc: Number(formatUnits(job.amount, decimals)) };

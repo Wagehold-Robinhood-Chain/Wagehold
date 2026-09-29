@@ -45,19 +45,77 @@ const easeBack = (k: number) => {
   return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2);
 };
 
+// Jendela dibuat beda warna (biru, amber, cyan, pink) seperti ruangan-ruangan
+// berwarna di gambar referensi; saat Wright "working" jendelanya menyala
+// dengan warna masing-masing.
+const WINDOW_TINTS = ['#3f78c8', '#ffb020', '#2fc4e4', '#ff6f91'];
 function windowCanvas(emissive: boolean) {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
   const g = c.getContext('2d')!;
   g.fillStyle = emissive ? '#000' : '#ffffff';
   g.fillRect(0, 0, 64, 64);
-  g.fillStyle = emissive ? '#fff' : '#3f78c8';
+  if (!emissive) {
+    g.fillStyle = 'rgba(43,50,87,.09)'; // garis pemisah lantai
+    g.fillRect(0, 60, 64, 4);
+  }
   [
     [8, 10],
     [36, 10],
     [8, 38],
     [36, 38],
-  ].forEach(([x, y]) => g.fillRect(x, y, 20, 16));
+  ].forEach(([x, y], i) => {
+    g.fillStyle = WINDOW_TINTS[i];
+    g.fillRect(x, y, 20, 16);
+    if (!emissive) {
+      g.fillStyle = 'rgba(255,255,255,.35)'; // kilau kaca
+      g.fillRect(x, y, 20, 4);
+    }
+  });
+  return c;
+}
+
+// Ubin papan-catur berwarna untuk lantai tiap Ward.
+function tileCanvas(color: THREE.Color) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d')!;
+  const white = new THREE.Color(0xffffff);
+  const a = color.clone().lerp(white, 0.55).getStyle();
+  const b = color.clone().lerp(white, 0.82).getStyle();
+  for (let i = 0; i < 8; i++)
+    for (let j = 0; j < 8; j++) {
+      g.fillStyle = (i + j) % 2 ? a : b;
+      g.fillRect(i * 16, j * 16, 16, 16);
+    }
+  return c;
+}
+
+// Plaza di sekeliling Counting House: cincin irisan berwarna Ward.
+function plazaCanvas(colors: string[]) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#fff3d0';
+  g.fillRect(0, 0, 256, 256);
+  const n = colors.length * 2;
+  for (let i = 0; i < n; i++) {
+    g.beginPath();
+    g.moveTo(128, 128);
+    g.arc(128, 128, 122, (i / n) * Math.PI * 2, ((i + 1) / n) * Math.PI * 2);
+    g.closePath();
+    g.fillStyle = colors[i % colors.length];
+    g.fill();
+  }
+  g.beginPath();
+  g.arc(128, 128, 98, 0, Math.PI * 2);
+  g.fillStyle = '#fff3d0';
+  g.fill();
+  g.beginPath();
+  g.arc(128, 128, 96, 0, Math.PI * 2);
+  g.strokeStyle = '#f3b93a';
+  g.lineWidth = 5;
+  g.stroke();
   return c;
 }
 
@@ -151,6 +209,8 @@ interface Building {
   map: THREE.CanvasTexture;
   emissiveMap: THREE.CanvasTexture;
   beacon: THREE.Mesh<THREE.OctahedronGeometry, THREE.MeshLambertMaterial>;
+  roofDeco: THREE.Group;
+  flag: THREE.Mesh;
   label: HTMLDivElement;
   h: number;
   target: number;
@@ -256,7 +316,7 @@ export function CityScene({
     // Cahaya siang: langit putih + pantulan rumput, matahari hangat, dan fill
     // kebiruan dari sisi berlawanan supaya sisi gelap gedung tetap berwarna.
     // Intensitas x PI karena r155+ tidak lagi memakai "legacy lights".
-    scene.add(new THREE.HemisphereLight(0xdcecff, 0x8fd06a, 0.55 * Math.PI));
+    scene.add(new THREE.HemisphereLight(0xe4f1ff, 0x7cf04f, 0.66 * Math.PI));
     const sun = new THREE.DirectionalLight(0xffe7b8, 0.85 * Math.PI);
     sun.position.set(20, 40, 10);
     scene.add(sun);
@@ -266,7 +326,7 @@ export function CityScene({
 
     const ground = new THREE.Mesh(new THREE.CylinderGeometry(22, 22, 0.6, 64), [
       new THREE.MeshLambertMaterial({ color: 0xc8b48a }), // sisi: lempeng tanah
-      new THREE.MeshLambertMaterial({ color: 0x5cc24a }), // atas: rumput segar
+      new THREE.MeshLambertMaterial({ color: 0x4fd63a }), // atas: rumput hijau cerah
       new THREE.MeshLambertMaterial({ color: 0xc8b48a }),
     ]);
     ground.position.y = -0.5;
@@ -316,6 +376,58 @@ export function CityScene({
       ease: easeBack,
     });
 
+    // Plaza berwarna di kaki Counting House (juga menutup celah ke rumput).
+    const plazaMap = new THREE.CanvasTexture(
+      plazaCanvas(
+        DISTRICT_ORDER.map((d) =>
+          vivid(WARD_COLOR_HEX[d], 1.6, 0.66).getStyle(),
+        ),
+      ),
+    );
+    plazaMap.colorSpace = THREE.SRGBColorSpace;
+    const plaza = new THREE.Mesh(
+      new THREE.CylinderGeometry(5.2, 5.3, 0.24, 48),
+      [
+        new THREE.MeshLambertMaterial({ color: 0xf0d9a8 }),
+        new THREE.MeshLambertMaterial({ map: plazaMap }),
+        new THREE.MeshLambertMaterial({ color: 0xf0d9a8 }),
+      ],
+    );
+    plaza.position.y = -0.08;
+    scene.add(plaza);
+    pops.push({
+      o: plaza,
+      delay: 0.05,
+      dur: 0.6,
+      mode: 'uniform',
+      ease: easeOut,
+    });
+
+    // Halo emas berputar di sekeliling menara Counting House.
+    const halo = new THREE.Mesh(
+      new THREE.TorusGeometry(2.75, 0.07, 8, 56),
+      new THREE.MeshLambertMaterial({
+        color: 0xffd23a,
+        emissive: 0xffa800,
+        emissiveIntensity: 0.6,
+      }),
+    );
+    halo.rotation.x = Math.PI / 2;
+    halo.position.y = 4.3;
+    hall.add(halo);
+
+    // Dipakai bersama oleh pohon, semak, dan taman atap.
+    const blobGeo = new THREE.IcosahedronGeometry(1, 0);
+    const leafMats = [
+      0x2ecb4a, 0x5ee63a, 0x1fc56e, 0x8cf24a, 0xb2f04a, 0x14bf8c,
+    ].map(
+      (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true }),
+    );
+    // PRNG terpisah untuk semua dekorasi baru, supaya posisi pohon (yang
+    // memakai `rand`) tetap sama persis seperti sebelumnya.
+    const rand2 = mulberry32(880031);
+    const pick2 = <T,>(arr: T[]) => arr[Math.floor(rand2() * arr.length)];
+
     const buildings = new Map<string, Building>();
     const pickables: THREE.Mesh[] = [];
     const distLabels: {
@@ -361,6 +473,24 @@ export function CityScene({
       pops.push({
         o: plate,
         delay: wardDelay,
+        dur: 0.55,
+        mode: 'uniform',
+        ease: easeBack,
+      });
+
+      // Inlay ubin papan-catur berwarna di atas lantai Ward.
+      const tileMap = new THREE.CanvasTexture(tileCanvas(col));
+      tileMap.colorSpace = THREE.SRGBColorSpace;
+      const inlay = new THREE.Mesh(
+        new THREE.BoxGeometry(7.6, 0.06, 7.6),
+        new THREE.MeshLambertMaterial({ map: tileMap }),
+      );
+      inlay.position.set(cx, 0.48, cz);
+      inlay.rotation.y = -ang;
+      scene.add(inlay);
+      pops.push({
+        o: inlay,
+        delay: wardDelay + 0.05,
         dur: 0.55,
         mode: 'uniform',
         ease: easeBack,
@@ -425,7 +555,7 @@ export function CityScene({
         const wallMaterial = new THREE.MeshLambertMaterial({
           color: col.clone().lerp(new THREE.Color(0xffffff), 0.08),
           map,
-          emissive: new THREE.Color(0xffd58a),
+          emissive: new THREE.Color(0xffffff),
           emissiveMap,
           emissiveIntensity: 0.05,
         });
@@ -456,6 +586,48 @@ export function CityScene({
         );
         scene.add(beacon);
 
+        // Taman atap + AC + bendera berwarna Ward (dipindah mengikuti tinggi gedung).
+        const roofDeco = new THREE.Group();
+        const garden = new THREE.Mesh(
+          new THREE.BoxGeometry(1.3, 0.1, 1.3),
+          new THREE.MeshLambertMaterial({ color: 0x5ee04a }),
+        );
+        garden.position.set(-0.35, 0.05, -0.3);
+        roofDeco.add(garden);
+        [
+          [-0.35, -0.3, 0.34],
+          [-0.75, 0.0, 0.24],
+          [0.0, 0.0, 0.2],
+        ].forEach(([bx, bz, bs]) => {
+          const bush = new THREE.Mesh(blobGeo, pick2(leafMats));
+          bush.position.set(bx, 0.1 + bs * 0.7, bz);
+          bush.scale.setScalar(bs);
+          roofDeco.add(bush);
+        });
+        const ac = new THREE.Mesh(
+          new THREE.BoxGeometry(0.5, 0.28, 0.4),
+          new THREE.MeshLambertMaterial({ color: 0xe6ebf5 }),
+        );
+        ac.position.set(0.6, 0.14, 0.55);
+        roofDeco.add(ac);
+        const pole = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.025, 0.025, 1.1, 6),
+          new THREE.MeshLambertMaterial({ color: 0xcfd6e6 }),
+        );
+        pole.position.set(0.8, 0.55, -0.8);
+        roofDeco.add(pole);
+        const flag = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.44, 0.26).translate(0.22, 0, 0),
+          new THREE.MeshLambertMaterial({
+            color: vivid(WARD_COLOR_HEX[districtId], 1.7, 0.5),
+            side: THREE.DoubleSide,
+          }),
+        );
+        flag.position.set(0.8, 0.98, -0.8);
+        roofDeco.add(flag);
+        roofDeco.visible = false;
+        scene.add(roofDeco);
+
         const label = makeLabel('bld', '$' + agent.ticker);
         labelsEl.appendChild(label);
 
@@ -471,6 +643,8 @@ export function CityScene({
           map,
           emissiveMap,
           beacon,
+          roofDeco,
+          flag,
           label,
           h,
           target: h,
@@ -489,20 +663,15 @@ export function CityScene({
     const GROUND_Y = -0.2; // permukaan rumput
     const trunkGeo = new THREE.CylinderGeometry(0.12, 0.18, 1, 6);
     trunkGeo.translate(0, 0.5, 0);
-    const blobGeo = new THREE.IcosahedronGeometry(1, 0);
     const coneGeo = new THREE.ConeGeometry(1, 1, 7);
     coneGeo.translate(0, 0.5, 0);
     const trunkMat = new THREE.MeshLambertMaterial({ color: 0x8a5a34 });
-    const leafMats = [0x3fb84a, 0x55c83f, 0x2fae62, 0x74d24a].map(
+    const pineMats = [0x12a85a, 0x22c975].map(
       (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true }),
     );
-    const pineMats = [0x1f9a55, 0x2fae68].map(
+    const blossomMats = [0xff8fb3, 0xff6f91, 0xc58bff, 0xffb347].map(
       (c) => new THREE.MeshLambertMaterial({ color: c, flatShading: true }),
     );
-    const blossomMat = new THREE.MeshLambertMaterial({
-      color: 0xff8fb3,
-      flatShading: true,
-    });
 
     const rand = mulberry32(20260928);
     const pick = <T,>(arr: T[]) => arr[Math.floor(rand() * arr.length)];
@@ -529,7 +698,7 @@ export function CityScene({
       } else {
         trunk.scale.set(1, 0.95, 1);
         tree.add(trunk);
-        const mat = kind === 'blossom' ? blossomMat : pick(leafMats);
+        const mat = kind === 'blossom' ? pick2(blossomMats) : pick(leafMats);
         const low = new THREE.Mesh(blobGeo, mat);
         low.position.y = 1.4;
         low.scale.set(0.85, 0.75, 0.85);
@@ -597,6 +766,526 @@ export function CityScene({
         dur: 0.55,
         mode: 'uniform',
         ease: easeBack,
+      });
+    }
+
+    // ===== Suasana hidup: dekorasi tambahan =====
+    // Semua di bawah ini hanya MENAMBAH (orang, mobil, lampu, bunga, kolam,
+    // kupu-kupu, awan). Layout Ward, jalan, gedung, dan pohon tidak diubah.
+    const decorSpots: [number, number, number][] = [];
+    const isFree = (x: number, z: number, r: number, useDecor = true) => {
+      if (Math.hypot(x, z) + r > 21) return false;
+      if (isBlocked(x, z)) return false;
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2;
+        if (isBlocked(x + Math.cos(a) * r, z + Math.sin(a) * r)) return false;
+      }
+      if (treeSpots.some(([tx, tz]) => Math.hypot(tx - x, tz - z) < r + 0.9))
+        return false;
+      if (
+        useDecor &&
+        decorSpots.some(
+          ([dx, dz, dr]) => Math.hypot(dx - x, dz - z) < r + dr + 0.3,
+        )
+      )
+        return false;
+      return true;
+    };
+    function findSpot(r: number, tries = 160): [number, number] | null {
+      for (let i = 0; i < tries; i++) {
+        const a = rand2() * Math.PI * 2;
+        const d = 6 + Math.sqrt(rand2()) * 14.5;
+        const x = Math.cos(a) * d;
+        const z = Math.sin(a) * d;
+        if (isFree(x, z, r)) {
+          decorSpots.push([x, z, r]);
+          return [x, z];
+        }
+      }
+      return null;
+    }
+
+    // Statis: tumbuh dari tanah (scale.y) setelah Ward & gedung muncul.
+    const decor = new THREE.Group();
+    scene.add(decor);
+
+    // Petak rumput dengan hijau berbeda-beda.
+    const patchColors = [0x6cec4a, 0x3ed03a, 0xa4f26a, 0x2fc866];
+    for (let i = 0; i < 16; i++) {
+      const r = 1.2 + rand2() * 1.6;
+      const a = rand2() * Math.PI * 2;
+      const d = 6 + Math.sqrt(rand2()) * 14;
+      const x = Math.cos(a) * d;
+      const z = Math.sin(a) * d;
+      if (!isFree(x, z, r, false)) continue;
+      const patch = new THREE.Mesh(
+        new THREE.CylinderGeometry(r, r, 0.02, 20),
+        new THREE.MeshLambertMaterial({ color: pick2(patchColors) }),
+      );
+      patch.position.set(x, GROUND_Y + 0.01 + i * 0.002, z);
+      decor.add(patch);
+    }
+
+    // Kolam kecil dengan tepi batu & teratai.
+    const pondMats: THREE.MeshLambertMaterial[] = [];
+    for (let i = 0; i < 2; i++) {
+      const spot = findSpot(1.7);
+      if (!spot) continue;
+      const [px, pz] = spot;
+      const edge = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.75, 1.8, 0.1, 28),
+        new THREE.MeshLambertMaterial({ color: 0xf3ead2 }),
+      );
+      edge.position.set(px, GROUND_Y + 0.05, pz);
+      decor.add(edge);
+      const waterMat = new THREE.MeshLambertMaterial({
+        color: 0x3fb8f0,
+        emissive: 0x1a78c0,
+        emissiveIntensity: 0.3,
+      });
+      pondMats.push(waterMat);
+      const water = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.5, 1.5, 0.1, 28),
+        waterMat,
+      );
+      water.position.set(px, GROUND_Y + 0.08, pz);
+      decor.add(water);
+      for (let k = 0; k < 3; k++) {
+        const a = rand2() * Math.PI * 2;
+        const dd = 0.3 + rand2() * 0.85;
+        const pad = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.26, 0.26, 0.03, 10),
+          new THREE.MeshLambertMaterial({ color: 0x3fc264 }),
+        );
+        pad.position.set(
+          px + Math.cos(a) * dd,
+          GROUND_Y + 0.15,
+          pz + Math.sin(a) * dd,
+        );
+        decor.add(pad);
+        if (k < 2) {
+          const bud = new THREE.Mesh(
+            new THREE.IcosahedronGeometry(0.11, 0),
+            new THREE.MeshLambertMaterial({
+              color: k ? 0xff8fb3 : 0xffffff,
+              flatShading: true,
+            }),
+          );
+          bud.position.set(pad.position.x, GROUND_Y + 0.22, pad.position.z);
+          decor.add(bud);
+        }
+      }
+    }
+
+    // Semak berbunga warna-warni (InstancedMesh supaya ringan).
+    const flowerGeo = new THREE.IcosahedronGeometry(0.11, 0);
+    const flowerMat = new THREE.MeshLambertMaterial({ flatShading: true });
+    const FLOWER_COLORS = [
+      0xff5d8f, 0xffd23a, 0xff8a3d, 0xb46bff, 0xffffff, 0xff4b4b, 0x4dc9ff,
+    ].map((c) => new THREE.Color(c));
+    const clusters: [number, number][] = [];
+    for (let i = 0; i < 24; i++) {
+      const s = findSpot(0.75);
+      if (s) clusters.push(s);
+    }
+    const PER_CLUSTER = 7;
+    const flowers = new THREE.InstancedMesh(
+      flowerGeo,
+      flowerMat,
+      Math.max(1, clusters.length * PER_CLUSTER),
+    );
+    const dummy = new THREE.Object3D();
+    let fi = 0;
+    clusters.forEach(([cx0, cz0]) => {
+      const bush = new THREE.Mesh(blobGeo, pick2(leafMats));
+      bush.position.set(cx0, GROUND_Y + 0.22, cz0);
+      bush.scale.set(0.62, 0.42, 0.62);
+      decor.add(bush);
+      for (let k = 0; k < PER_CLUSTER; k++) {
+        const a = rand2() * Math.PI * 2;
+        const dd = 0.12 + rand2() * 0.42;
+        dummy.position.set(
+          cx0 + Math.cos(a) * dd,
+          GROUND_Y + 0.3 + (0.5 - dd) * 0.35 + rand2() * 0.06,
+          cz0 + Math.sin(a) * dd,
+        );
+        dummy.scale.setScalar(0.85 + rand2() * 0.4);
+        dummy.updateMatrix();
+        flowers.setMatrixAt(fi, dummy.matrix);
+        flowers.setColorAt(fi, pick2(FLOWER_COLORS));
+        fi++;
+      }
+    });
+    flowers.count = fi;
+    flowers.instanceMatrix.needsUpdate = true;
+    if (flowers.instanceColor) flowers.instanceColor.needsUpdate = true;
+    decor.add(flowers);
+
+    // Semak polos tambahan.
+    for (let i = 0; i < 14; i++) {
+      const s = findSpot(0.5);
+      if (!s) continue;
+      const bush = new THREE.Mesh(blobGeo, pick2(leafMats));
+      bush.position.set(s[0], GROUND_Y + 0.2, s[1]);
+      bush.scale.set(0.5 + rand2() * 0.25, 0.4, 0.5 + rand2() * 0.25);
+      decor.add(bush);
+    }
+
+    // Lampu jalan di dua sisi tiap jalan menuju Ward.
+    const poleGeo = new THREE.CylinderGeometry(0.045, 0.06, 1.5, 6);
+    poleGeo.translate(0, 0.75, 0);
+    const poleMat = new THREE.MeshLambertMaterial({ color: 0x4a4f6a });
+    const bulbGeo = new THREE.SphereGeometry(0.17, 10, 8);
+    const bulbMat = new THREE.MeshLambertMaterial({
+      color: 0xfff2b0,
+      emissive: 0xffd84a,
+      emissiveIntensity: 1,
+    });
+    wardAngles.forEach((ang) => {
+      const dx = Math.cos(ang);
+      const dz = Math.sin(ang);
+      [3.8, 6.6].forEach((along) => {
+        [-1, 1].forEach((side) => {
+          const across = side * 0.98;
+          const lx = dx * along - dz * across;
+          const lz = dz * along + dx * across;
+          const pole = new THREE.Mesh(poleGeo, poleMat);
+          pole.position.set(lx, GROUND_Y, lz);
+          decor.add(pole);
+          const bulb = new THREE.Mesh(bulbGeo, bulbMat);
+          bulb.position.set(lx, GROUND_Y + 1.6, lz);
+          decor.add(bulb);
+        });
+      });
+    });
+
+    // Orang-orang kecil berbaju warna-warni.
+    const SKIN = [0xffd7b5, 0xf1c27d, 0xc68642, 0x8d5524, 0xe0ac69].map(
+      (c) => new THREE.MeshLambertMaterial({ color: c }),
+    );
+    const HAIR = [0x2b2118, 0x5a3825, 0xd9a441, 0x1c1c28, 0xa4482c].map(
+      (c) => new THREE.MeshLambertMaterial({ color: c }),
+    );
+    const SHIRTS = [
+      0xff5d8f, 0xffb020, 0x3ec7e0, 0x8f6bff, 0x4cd07d, 0xff7a45, 0x3f78ff,
+      0xff4b4b,
+    ].map((c) => new THREE.MeshLambertMaterial({ color: c }));
+    const PANTS = [0x2b3257, 0x3a4a7a, 0x5a4636, 0x4a4f6a].map(
+      (c) => new THREE.MeshLambertMaterial({ color: c }),
+    );
+    const torsoGeo = new THREE.CylinderGeometry(0.1, 0.13, 0.34, 8);
+    torsoGeo.translate(0, 0.37, 0);
+    const headGeo = new THREE.SphereGeometry(0.1, 10, 8);
+    const hairGeo = new THREE.SphereGeometry(0.105, 10, 8);
+    const legGeo = new THREE.BoxGeometry(0.07, 0.2, 0.07);
+    legGeo.translate(0, -0.1, 0);
+
+    interface Person {
+      root: THREE.Group;
+      legL: THREE.Group;
+      legR: THREE.Group;
+    }
+    function makePerson(): Person {
+      const root = new THREE.Group();
+      const inner = new THREE.Group();
+      root.add(inner);
+      const pants = pick2(PANTS);
+      const mk = (x: number) => {
+        const g = new THREE.Group();
+        g.position.set(x, 0.2, 0);
+        g.add(new THREE.Mesh(legGeo, pants));
+        inner.add(g);
+        return g;
+      };
+      const legL = mk(-0.05);
+      const legR = mk(0.05);
+      inner.add(new THREE.Mesh(torsoGeo, pick2(SHIRTS)));
+      const head = new THREE.Mesh(headGeo, pick2(SKIN));
+      head.position.y = 0.65;
+      inner.add(head);
+      const hair = new THREE.Mesh(hairGeo, pick2(HAIR));
+      hair.position.set(0, 0.68, -0.02);
+      hair.scale.set(1, 0.7, 1);
+      inner.add(hair);
+      inner.scale.setScalar(1.15);
+      root.visible = false;
+      scene.add(root);
+      return { root, legL, legR };
+    }
+    function stride(p: Person, t: number, speed: number, ph: number) {
+      const s = Math.sin(t * speed * 9 + ph);
+      p.legL.rotation.x = s * 0.7;
+      p.legR.rotation.x = -s * 0.7;
+      return Math.abs(s) * 0.035; // naik-turun kecil saat melangkah
+    }
+
+    type Mover = (
+      t: number,
+      dt: number,
+      grow: (delay: number, dur: number, ease: (k: number) => number) => number,
+    ) => void;
+    const movers: Mover[] = [];
+
+    // Pejalan kaki di tepi jalan (dua arah) menuju tiap Ward.
+    wardAngles.forEach((ang, wi) => {
+      const dx = Math.cos(ang);
+      const dz = Math.sin(ang);
+      for (let k = 0; k < 3; k++) {
+        const person = makePerson();
+        let along = 3.4 + rand2() * 5.2;
+        let dir = (k % 2 === 0 ? 1 : -1) as 1 | -1;
+        let lat = dir * 0.47;
+        const speed = 0.55 + rand2() * 0.4;
+        const ph = rand2() * 6;
+        const delay = 1.7 + wi * 0.1 + k * 0.15;
+        movers.push((t, dt, grow) => {
+          along += dir * speed * dt;
+          if (along > 8.8) {
+            along = 8.8;
+            dir = -1;
+          } else if (along < 3.3) {
+            along = 3.3;
+            dir = 1;
+          }
+          lat += (dir * 0.47 - lat) * Math.min(1, dt * 3);
+          const bob = stride(person, t, dt > 0 ? speed : 0, ph);
+          person.root.position.set(
+            dx * along - dz * lat,
+            0.06 + bob,
+            dz * along + dx * lat,
+          );
+          person.root.rotation.y = Math.atan2(dx * dir, dz * dir);
+          const e = grow(delay, 0.4, easeBack);
+          person.root.visible = e > 0.001;
+          person.root.scale.setScalar(Math.max(e, 0.001));
+        });
+      }
+    });
+
+    // Pejalan yang berkeliling di plaza Counting House.
+    for (let k = 0; k < 7; k++) {
+      const person = makePerson();
+      let a = rand2() * Math.PI * 2;
+      const sgn = k % 2 === 0 ? 1 : -1;
+      const rad = 4.35 + rand2() * 0.55;
+      const speed = 0.5 + rand2() * 0.3;
+      const ph = rand2() * 6;
+      const delay = 1.9 + k * 0.1;
+      movers.push((t, dt, grow) => {
+        a += (sgn * speed * dt) / rad;
+        const bob = stride(person, t, dt > 0 ? speed : 0, ph);
+        person.root.position.set(
+          Math.cos(a) * rad,
+          0.06 + bob,
+          Math.sin(a) * rad,
+        );
+        person.root.rotation.y = Math.atan2(
+          -Math.sin(a) * sgn,
+          Math.cos(a) * sgn,
+        );
+        const e = grow(delay, 0.4, easeBack);
+        person.root.visible = e > 0.001;
+        person.root.scale.setScalar(Math.max(e, 0.001));
+      });
+    }
+
+    // Pejalan santai di taman.
+    for (let k = 0; k < 6; k++) {
+      let seg: [number, number, number, number] | null = null;
+      for (let i = 0; i < 80 && !seg; i++) {
+        const a = rand2() * Math.PI * 2;
+        const d = 6 + Math.sqrt(rand2()) * 13;
+        const x0 = Math.cos(a) * d;
+        const z0 = Math.sin(a) * d;
+        const wa = rand2() * Math.PI * 2;
+        const len = 3 + rand2() * 3;
+        const x1 = x0 + Math.cos(wa) * len;
+        const z1 = z0 + Math.sin(wa) * len;
+        if (
+          isFree(x0, z0, 0.3) &&
+          isFree(x1, z1, 0.3) &&
+          isFree((x0 + x1) / 2, (z0 + z1) / 2, 0.3)
+        )
+          seg = [x0, z0, x1, z1];
+      }
+      if (!seg) continue;
+      const [x0, z0, x1, z1] = seg;
+      const person = makePerson();
+      const total = Math.hypot(x1 - x0, z1 - z0);
+      let u = rand2();
+      let dir = 1;
+      const speed = 0.4 + rand2() * 0.25;
+      const ph = rand2() * 6;
+      const delay = 2.2 + k * 0.12;
+      movers.push((t, dt, grow) => {
+        u += (dir * speed * dt) / total;
+        if (u > 1) {
+          u = 1;
+          dir = -1;
+        } else if (u < 0) {
+          u = 0;
+          dir = 1;
+        }
+        const bob = stride(person, t, dt > 0 ? speed : 0, ph);
+        person.root.position.set(
+          x0 + (x1 - x0) * u,
+          GROUND_Y + bob,
+          z0 + (z1 - z0) * u,
+        );
+        person.root.rotation.y = Math.atan2((x1 - x0) * dir, (z1 - z0) * dir);
+        const e = grow(delay, 0.4, easeBack);
+        person.root.visible = e > 0.001;
+        person.root.scale.setScalar(Math.max(e, 0.001));
+      });
+    }
+
+    // Mobil kecil warna-warni bolak-balik di jalan menuju tiap Ward.
+    const CAR_COLORS = [0xff5a5f, 0xffc233, 0x3ec7e0, 0x8f6bff, 0x4cd07d];
+    const wheelGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.06, 10);
+    wheelGeo.rotateZ(Math.PI / 2);
+    const wheelMat = new THREE.MeshLambertMaterial({ color: 0x2b2f45 });
+    const glassMat = new THREE.MeshLambertMaterial({ color: 0xcfe8ff });
+    const lightMat = new THREE.MeshLambertMaterial({
+      color: 0xfff2b0,
+      emissive: 0xffd84a,
+      emissiveIntensity: 0.9,
+    });
+    wardAngles.forEach((ang, wi) => {
+      const dx = Math.cos(ang);
+      const dz = Math.sin(ang);
+      const car = new THREE.Group();
+      const bodyMat = new THREE.MeshLambertMaterial({
+        color: CAR_COLORS[wi % CAR_COLORS.length],
+      });
+      const body = new THREE.Mesh(
+        new THREE.BoxGeometry(0.4, 0.16, 0.8),
+        bodyMat,
+      );
+      body.position.y = 0.17;
+      car.add(body);
+      const cabin = new THREE.Mesh(
+        new THREE.BoxGeometry(0.34, 0.14, 0.4),
+        glassMat,
+      );
+      cabin.position.set(0, 0.31, -0.05);
+      car.add(cabin);
+      const roof = new THREE.Mesh(
+        new THREE.BoxGeometry(0.36, 0.03, 0.42),
+        bodyMat,
+      );
+      roof.position.set(0, 0.395, -0.05);
+      car.add(roof);
+      [
+        [-0.23, 0.26],
+        [0.23, 0.26],
+        [-0.23, -0.26],
+        [0.23, -0.26],
+      ].forEach(([wx, wz]) => {
+        const w = new THREE.Mesh(wheelGeo, wheelMat);
+        w.position.set(wx, 0.09, wz);
+        car.add(w);
+      });
+      [-0.12, 0.12].forEach((lx) => {
+        const l = new THREE.Mesh(
+          new THREE.BoxGeometry(0.07, 0.05, 0.03),
+          lightMat,
+        );
+        l.position.set(lx, 0.18, 0.4);
+        car.add(l);
+      });
+      car.visible = false;
+      scene.add(car);
+
+      let along = 3.6 + rand2() * 4.5;
+      let dir = (wi % 2 === 0 ? 1 : -1) as 1 | -1;
+      let pause = 0;
+      const delay = 2.0 + wi * 0.12;
+      movers.push((_t, dt, grow) => {
+        if (pause > 0) pause -= dt;
+        else {
+          along += dir * 1.3 * dt;
+          if (along > 8.7 || along < 3.5) {
+            along = Math.min(8.7, Math.max(3.5, along));
+            dir = (dir * -1) as 1 | -1;
+            pause = 1.2 + rand2();
+          }
+        }
+        car.position.set(dx * along, 0.06, dz * along);
+        car.rotation.y = Math.atan2(dx * dir, dz * dir);
+        const e = grow(delay, 0.4, easeBack);
+        car.visible = e > 0.001;
+        car.scale.setScalar(Math.max(e, 0.001));
+      });
+    });
+
+    // Kupu-kupu beterbangan di atas semak berbunga.
+    const wingGeo = new THREE.PlaneGeometry(0.2, 0.15).translate(0.1, 0, 0);
+    const BUTTERFLY = [0xff8a3d, 0xffd23a, 0xff6f91, 0x5ab8ff];
+    const butterflyCount = Math.min(9, clusters.length);
+    for (let k = 0; k < butterflyCount; k++) {
+      const [bx, bz] = clusters[k];
+      const mat = new THREE.MeshLambertMaterial({
+        color: BUTTERFLY[k % BUTTERFLY.length],
+        emissive: BUTTERFLY[k % BUTTERFLY.length],
+        emissiveIntensity: 0.35,
+        side: THREE.DoubleSide,
+      });
+      const bf = new THREE.Group();
+      const wl = new THREE.Mesh(wingGeo, mat);
+      const wr = new THREE.Mesh(wingGeo, mat);
+      wr.rotation.y = Math.PI;
+      bf.add(wl, wr);
+      bf.visible = false;
+      scene.add(bf);
+      const ph = rand2() * 6;
+      const rr = 0.7 + rand2() * 0.9;
+      const sp = 0.6 + rand2() * 0.6;
+      movers.push((t, dt, grow) => {
+        const a = t * sp + ph;
+        bf.position.set(
+          bx + Math.cos(a) * rr,
+          GROUND_Y + 1.0 + Math.sin(t * 2.3 + ph) * 0.25,
+          bz + Math.sin(a * 1.3) * rr,
+        );
+        bf.rotation.y = -a;
+        const flap = dt > 0 ? Math.sin(t * 22 + ph) * 0.9 : 0.3;
+        wl.rotation.z = flap;
+        wr.rotation.z = -flap;
+        bf.visible = grow(2.4, 0.3, easeOut) > 0.5;
+      });
+    }
+
+    // Awan putih pelan-pelan melayang mengitari pulau.
+    const cloudMat = new THREE.MeshLambertMaterial({
+      color: 0xffffff,
+      emissive: 0xbfd8f5,
+      emissiveIntensity: 0.35,
+    });
+    const cloudGeo = new THREE.SphereGeometry(1, 12, 8);
+    for (let k = 0; k < 6; k++) {
+      const cloud = new THREE.Group();
+      const puffs = 3 + Math.floor(rand2() * 3);
+      for (let i = 0; i < puffs; i++) {
+        const m = new THREE.Mesh(cloudGeo, cloudMat);
+        const sc = 1.0 + rand2() * 1.1;
+        m.scale.set(sc * 1.4, sc * 0.7, sc);
+        m.position.set(
+          i * 1.5 - puffs * 0.7,
+          rand2() * 0.4,
+          (rand2() - 0.5) * 1.2,
+        );
+        cloud.add(m);
+      }
+      const base = (k / 6) * Math.PI * 2 + rand2();
+      const dist = 26 + rand2() * 6;
+      const y = 0.5 + rand2() * 2.5;
+      const sp = 0.012 + rand2() * 0.012;
+      cloud.position.y = y;
+      scene.add(cloud);
+      movers.push((t) => {
+        const a = base + t * sp;
+        cloud.position.x = Math.cos(a) * dist;
+        cloud.position.z = Math.sin(a) * dist;
       });
     }
 
@@ -863,6 +1552,11 @@ export function CityScene({
         project(labelPos, b.label);
         b.label.style.opacity = String(grow(b.delay + 0.35, 0.35, easeOut));
         highlightLabel(b.label, hovered || selectedRef.current === b.agentId);
+
+        b.roofDeco.visible = rise > 0.98;
+        b.roofDeco.position.set(b.mesh.position.x, top, b.mesh.position.z);
+        b.roofDeco.rotation.y = b.mesh.rotation.y;
+        b.flag.rotation.y = reduceMotion ? 0 : Math.sin(t * 4 + b.phase) * 0.35;
       });
 
       const focusId = hoverId ?? selectedRef.current;
@@ -896,6 +1590,17 @@ export function CityScene({
       }
 
       hallCap.rotation.y += reduceMotion ? 0 : dt * 0.3;
+      halo.position.y = 4.3 + (reduceMotion ? 0 : Math.sin(t * 1.2) * 0.12);
+
+      // Dekorasi statis tumbuh dari tanah; air kolam berkilau.
+      decor.scale.y = Math.max(grow(1.4, 0.7, easeOut), 0.001);
+      decor.visible = since > 1.4 || reduceMotion;
+      pondMats.forEach((m, i) => {
+        m.emissiveIntensity =
+          0.3 + (reduceMotion ? 0 : Math.sin(t * 2 + i) * 0.1);
+      });
+      const mdt = reduceMotion ? 0 : dt;
+      movers.forEach((mv) => mv(t, mdt, grow));
       distLabels.forEach((l) => {
         project(l.pos, l.el);
         l.el.style.opacity = String(grow(l.delay, 0.4, easeOut));

@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Panel, PanelHeader, PanelScroll } from '@/components/ui/panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Chip } from '@/components/ui/chip';
+import { AgentFunction } from '@/components/agent-function';
 import { Button } from '@/components/ui/button';
 import { StatusPill } from '@/components/ui/status-pill';
 import { ProgressBar } from '@/components/ui/progress-bar';
@@ -87,7 +88,10 @@ export function WrightProfilePanel({
                 <h3 className="font-display text-xl font-bold tracking-tight text-text">
                   {agent.name}
                 </h3>
-                <p className="text-[13px] text-muted">{agent.description}</p>
+                <AgentFunction
+                  description={agent.description}
+                  district={agent.district}
+                />
               </div>
 
               <div className="grid grid-cols-2 border-b border-line">

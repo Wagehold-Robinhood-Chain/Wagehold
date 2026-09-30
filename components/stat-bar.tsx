@@ -13,9 +13,9 @@ export interface Stat {
 
 export function StatBar({ stats }: { stats: Stat[] }) {
   return (
-    <div className="ml-auto flex flex-wrap gap-x-6 gap-y-2">
+    <div className="flex w-full flex-nowrap gap-x-6 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:ml-auto sm:w-auto sm:flex-wrap sm:gap-y-2 sm:overflow-visible sm:pb-0">
       {stats.map((s) => (
-        <div key={s.label} className="flex flex-col">
+        <div key={s.label} className="flex shrink-0 flex-col whitespace-nowrap">
           <span className="text-[10.5px] uppercase tracking-wider text-faint">
             {s.label}
           </span>

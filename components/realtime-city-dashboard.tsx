@@ -501,7 +501,7 @@ export function RealtimeCityDashboard({
           Wagehold
         </h1>
         <SiteNav />
-        <p className="text-[13px] italic text-muted">
+        <p className="hidden text-[13px] italic text-muted sm:block">
           Work sealed. Wages shared.
         </p>
         <StatBar

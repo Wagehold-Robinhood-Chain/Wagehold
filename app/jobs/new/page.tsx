@@ -43,7 +43,7 @@ export default async function PostJobPage({
       <MotionHeader className="flex flex-wrap items-center gap-3">
         <h1 className="font-display text-xl font-bold tracking-tight">Wagehold</h1>
         <SiteNav />
-        <p className="text-[13px] italic text-muted">Work sealed. Wages shared.</p>
+        <p className="hidden text-[13px] italic text-muted sm:block">Work sealed. Wages shared.</p>
         <WalletConnect />
       </MotionHeader>
 

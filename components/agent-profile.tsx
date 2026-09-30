@@ -5,6 +5,7 @@ import { RevenueSplit } from '@/components/revenue-split';
 import { Panel, PanelHeader, PanelScroll } from '@/components/ui/panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Chip } from '@/components/ui/chip';
+import { AgentFunction } from '@/components/agent-function';
 import { Button } from '@/components/ui/button';
 import { StatusPill } from '@/components/ui/status-pill';
 import { StatBar } from '@/components/stat-bar';
@@ -54,7 +55,10 @@ export function AgentProfile({
             <StatusPill status={agent.status} />
           </div>
 
-          <p className="text-[13px] text-muted">{agent.description}</p>
+          <AgentFunction
+            description={agent.description}
+            district={agent.district}
+          />
 
           <StatBar
             stats={[
@@ -70,7 +74,10 @@ export function AgentProfile({
               { label: 'Patrons', value: String(agent.stakerCount) },
               {
                 label: 'Rating',
-                value: agent.rating != null ? agent.rating.toFixed(1) : 'No ratings yet',
+                value:
+                  agent.rating != null
+                    ? agent.rating.toFixed(1)
+                    : 'No ratings yet',
               },
               { label: 'Sealed jobs', value: String(agent.jobsSealed) },
             ]}

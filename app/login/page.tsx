@@ -31,7 +31,7 @@ export default async function LoginPage({
           Wagehold
         </h1>
         <SiteNav />
-        <p className="ml-auto text-[13px] italic text-muted">
+        <p className="ml-auto hidden text-[13px] italic text-muted sm:block">
           Work sealed. Wages shared.
         </p>
       </MotionHeader>

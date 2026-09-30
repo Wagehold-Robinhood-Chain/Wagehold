@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'motion/react';
 import { Panel, PanelHeader, PanelScroll } from '@/components/ui/panel';
-import { EmptyState } from '@/components/ui/empty-state';
+import { JobBoardEmpty } from '@/components/job-board-empty';
 import { Button } from '@/components/ui/button';
 import { JobTabs, type JobTab } from '@/components/job-tabs';
 import { JobCard } from '@/components/job-card';
@@ -40,13 +40,6 @@ const TAB_LABEL: Record<TabId, string> = {
   paid: 'Sealed',
 };
 
-const EMPTY_COPY: Record<TabId, string> = {
-  review: 'Nothing is waiting for your seal.',
-  working: 'No Wright is at work right now.',
-  open: 'No open jobs. Post one to start the line.',
-  paid: 'No sealed jobs yet.',
-};
-
 export function JobBoard({
   items: allItems,
   needsWallet,
@@ -62,8 +55,7 @@ export function JobBoard({
   // orang (transparansi kota), tapi detailnya terkunci untuk yang bukan pemilik
   // (lihat `locked` di JobCard dan gerbang di JobDetail).
   const items = useMemo(
-    () =>
-      allItems.filter((i) => (i.job.status === 'paid' ? true : i.isOwnJob)),
+    () => allItems.filter((i) => (i.job.status === 'paid' ? true : i.isOwnJob)),
     [allItems],
   );
   const [tab, setTab] = useState<TabId>('review');
@@ -114,8 +106,7 @@ export function JobBoard({
           typeof noteOrRating === 'number' ? noteOrRating : undefined,
         );
       } else {
-        const note =
-          typeof noteOrRating === 'string' ? noteOrRating : '';
+        const note = typeof noteOrRating === 'string' ? noteOrRating : '';
         await sendBack(job, note, (label) =>
           setSteps((s) => ({ ...s, [jobId]: label })),
         );
@@ -160,16 +151,16 @@ export function JobBoard({
 
       <PanelScroll>
         {showConnectPrompt ? (
-          <EmptyState>Connect your wallet to see your jobs.</EmptyState>
+          <JobBoardEmpty kind="wallet" />
         ) : visible.length === 0 ? (
-          <EmptyState>{EMPTY_COPY[tab]}</EmptyState>
+          <JobBoardEmpty kind={tab} />
         ) : (
           // key={tab}: ganti tab = daftar dibangun ulang, kartu muncul berurutan.
           // Job yang pindah tab lewat Realtime (mis. review -> paid) mengecil & hilang
           // dulu (exit), dan job baru yang masuk ke tab ini ikut fade in.
           <motion.div
             key={tab}
-            className="flex flex-col"
+            className="mx-auto grid w-full max-w-[1400px] grid-cols-1 gap-3 p-3 md:grid-cols-2 xl:grid-cols-3"
             variants={listVariants}
             initial="hidden"
             animate="visible"
@@ -184,10 +175,11 @@ export function JobBoard({
                     height: 0,
                     transition: { duration: 0.25 },
                   }}
-                  className="overflow-hidden"
+                  className="overflow-hidden rounded-xl"
                 >
                   <JobCard
                     job={job}
+                    card
                     isOwnJob={isOwnJob}
                     locked={job.status === 'paid' && !isOwnJob}
                     busy={pending[job.id]}

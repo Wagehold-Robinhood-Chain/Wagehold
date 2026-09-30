@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import * as THREE from 'three';
 import {
@@ -46,6 +46,48 @@ const easeBack = (k: number) => {
   const c3 = c1 + 1;
   return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2);
 };
+
+// ---------------------------------------------------------------------------
+// Siang / malam mengikuti jam lokal browser user. 0 = malam penuh, 1 = siang
+// penuh. Fajar ~05:15-06:45 dan senja ~17:15-18:45 (transisi mulus, dengan
+// warna langit hangat di tengahnya).
+// ---------------------------------------------------------------------------
+type ThemeMode = 'auto' | 'day' | 'night';
+const smoothstep = (a: number, b: number, x: number) => {
+  const k = clamp01((x - a) / (b - a));
+  return k * k * (3 - 2 * k);
+};
+function daylightAt(d: Date) {
+  const h = d.getHours() + d.getMinutes() / 60;
+  return clamp01(smoothstep(5.25, 6.75, h) - smoothstep(17.25, 18.75, h));
+}
+const rgbaOf = (c: THREE.Color, a: number) =>
+  `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
+
+const SKY_DAY = [new THREE.Color('#fff3d6'), new THREE.Color('#a9d8fb')];
+const SKY_DUSK = [new THREE.Color('#ffc58a'), new THREE.Color('#7f8ccf')];
+const SKY_NIGHT = [new THREE.Color('#27305f'), new THREE.Color('#0a0e2a')];
+function skyColor(day: number, i: 0 | 1, out: THREE.Color) {
+  return day < 0.5
+    ? out.copy(SKY_NIGHT[i]).lerp(SKY_DUSK[i], day / 0.5)
+    : out.copy(SKY_DUSK[i]).lerp(SKY_DAY[i], (day - 0.5) / 0.5);
+}
+
+// Bintang: satu layer CSS dari radial-gradient kecil, posisi tetap (bukan random tiap render).
+const STARS_BG = (() => {
+  let a = 1234567;
+  const rnd = () => {
+    a = (a * 1664525 + 1013904223) % 4294967296;
+    return a / 4294967296;
+  };
+  return Array.from({ length: 46 }, () => {
+    const x = (rnd() * 100).toFixed(1);
+    const y = (rnd() * 78).toFixed(1);
+    const r = (0.7 + rnd() * 0.9).toFixed(1);
+    const o = (0.45 + rnd() * 0.5).toFixed(2);
+    return `radial-gradient(${r}px ${r}px at ${x}% ${y}%, rgba(255,255,255,${o}) 50%, transparent 52%)`;
+  }).join(',');
+})();
 
 // Jendela dibuat beda warna (biru, amber, cyan, pink) seperti ruangan-ruangan
 // berwarna di gambar referensi; saat Wright "working" jendelanya menyala
@@ -257,6 +299,15 @@ export function CityScene({
   const nudgeRef = useRef<((dir: 1 | -1) => void) | null>(null);
   const router = useRouter();
 
+  // Auto = ikuti jam lokal user; Day / Night = paksa (tombol kecil di pojok kanan atas).
+  const [mode, setMode] = useState<ThemeMode>('auto');
+  const modeRef = useRef<ThemeMode>('auto');
+  const modeChanged = useRef(false);
+  useEffect(() => {
+    modeRef.current = mode;
+    modeChanged.current = true;
+  }, [mode]);
+
   // Data terbaru selalu lewat ref supaya loop animasi (di luar siklus render
   // React) tidak memegang closure data basi.
   const agentsRef = useRef(agents);
@@ -318,7 +369,8 @@ export function CityScene({
     // Cahaya siang: langit putih + pantulan rumput, matahari hangat, dan fill
     // kebiruan dari sisi berlawanan supaya sisi gelap gedung tetap berwarna.
     // Intensitas x PI karena r155+ tidak lagi memakai "legacy lights".
-    scene.add(new THREE.HemisphereLight(0xe4f1ff, 0x7cf04f, 0.66 * Math.PI));
+    const hemi = new THREE.HemisphereLight(0xe4f1ff, 0x7cf04f, 0.66 * Math.PI);
+    scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xffe7b8, 0.85 * Math.PI);
     sun.position.set(20, 40, 10);
     scene.add(sun);
@@ -1455,6 +1507,67 @@ export function CityScene({
       el.style.top = ((1 - v3.y) / 2) * stage!.clientHeight + 'px';
     }
 
+    // --- Siang / malam ----------------------------------------------------
+    const HEMI_SKY = [new THREE.Color(0x3f56a0), new THREE.Color(0xe4f1ff)];
+    const HEMI_GND = [new THREE.Color(0x1f3d33), new THREE.Color(0x7cf04f)];
+    const SUN_COL = [new THREE.Color(0x9db4ff), new THREE.Color(0xffe7b8)]; // bulan / matahari
+    const DUSK_COL = new THREE.Color(0xff9a5a);
+    const FILL_COL = [new THREE.Color(0x5a6cc0), new THREE.Color(0x9cbcff)];
+    const CLOUD_COL = [new THREE.Color(0x8d9acb), new THREE.Color(0xffffff)];
+    const CLOUD_EMI = [new THREE.Color(0x2b3866), new THREE.Color(0xbfd8f5)];
+    const UI_BG = [new THREE.Color(0x141a36), new THREE.Color(0xffffff)];
+    const UI_FG = [new THREE.Color(0xc9d0f2), new THREE.Color(0x4a516d)];
+    const tmpA = new THREE.Color();
+    const tmpB = new THREE.Color();
+
+    const clockTarget = () =>
+      modeRef.current === 'day'
+        ? 1
+        : modeRef.current === 'night'
+          ? 0
+          : daylightAt(new Date());
+    let day = clockTarget();
+    let appliedDay = -1;
+    let lastClock = performance.now();
+    let target = day;
+
+    function applyDaylight(d: number) {
+      hemi.color.copy(HEMI_SKY[0]).lerp(HEMI_SKY[1], d);
+      hemi.groundColor.copy(HEMI_GND[0]).lerp(HEMI_GND[1], d);
+      hemi.intensity = (0.5 + 0.16 * d) * Math.PI;
+      const warm = 1 - Math.abs(2 * d - 1); // puncak di fajar / senja
+      sun.color
+        .copy(SUN_COL[0])
+        .lerp(SUN_COL[1], d)
+        .lerp(DUSK_COL, warm * 0.55);
+      sun.intensity = (0.38 + 0.47 * d) * Math.PI;
+      fill.color.copy(FILL_COL[0]).lerp(FILL_COL[1], d);
+      fill.intensity = (0.2 + 0.1 * d) * Math.PI;
+      cloudMat.color.copy(CLOUD_COL[0]).lerp(CLOUD_COL[1], d);
+      cloudMat.emissive.copy(CLOUD_EMI[0]).lerp(CLOUD_EMI[1], d);
+
+      const st = stage!.style;
+      st.setProperty('--sky-in', skyColor(d, 0, tmpA).getStyle());
+      st.setProperty('--sky-out', skyColor(d, 1, tmpB).getStyle());
+      st.setProperty('--night', String(1 - d));
+      tmpA.copy(UI_BG[0]).lerp(UI_BG[1], d);
+      st.setProperty('--ui-bg', rgbaOf(tmpA, 0.8));
+      st.setProperty('--ui-btn', rgbaOf(tmpA, 0.92));
+      st.setProperty(
+        '--ui-fg',
+        tmpB.copy(UI_FG[0]).lerp(UI_FG[1], d).getStyle(),
+      );
+
+      // Label "Counting House" terbaca di kedua tema.
+      const isNight = d < 0.5;
+      hallLabel.style.color = isNight ? '#ffd98a' : '#a0741a';
+      hallLabel.style.textShadow = isNight
+        ? '0 0 6px rgba(10,14,42,.95), 0 1px 0 rgba(10,14,42,.95)'
+        : '0 0 6px #fff, 0 1px 0 #fff';
+    }
+    applyDaylight(day);
+    appliedDay = day;
+
     const t0 = performance.now() / 1000;
     let lastTime = performance.now();
     let raf = 0;
@@ -1467,6 +1580,23 @@ export function CityScene({
       const since = t - t0;
       const grow = (delay: number, dur: number, ease: (k: number) => number) =>
         reduceMotion ? 1 : ease(clamp01((since - delay) / dur));
+
+      // Jam dicek tiap beberapa detik saja; perpindahan siang <-> malam dibuat
+      // mulus (langsung loncat kalau user memilih reduced motion).
+      if (now - lastClock > 5000 || modeChanged.current) {
+        lastClock = now;
+        modeChanged.current = false;
+        target = clockTarget();
+      }
+      day = reduceMotion
+        ? target
+        : day + (target - day) * Math.min(1, dt * 1.6);
+      if (Math.abs(day - target) < 0.002) day = target;
+      if (Math.abs(day - appliedDay) > 0.001) {
+        applyDaylight(day);
+        appliedDay = day;
+      }
+      const night = 1 - day;
 
       if (!dragState && Math.abs(thetaVel) > 0.01) {
         theta += thetaVel * dt;
@@ -1514,12 +1644,15 @@ export function CityScene({
           hovered ? 1.05 : 1,
         );
 
+        // Malam: semua jendela menyala hangat; yang sedang bekerja paling terang.
         const want =
           b.status === 'working'
-            ? 0.95 + (reduceMotion ? 0 : Math.sin(t * 3 + b.phase) * 0.15)
+            ? 0.95 +
+              night * 0.3 +
+              (reduceMotion ? 0 : Math.sin(t * 3 + b.phase) * 0.15)
             : b.status === 'review'
-              ? 0.6
-              : 0.05;
+              ? 0.6 + night * 0.35
+              : 0.05 + night * 0.55;
         b.glow += (want - b.glow) * Math.min(1, dt * 4);
         b.wallMaterial.emissiveIntensity = b.glow;
 
@@ -1670,12 +1803,34 @@ export function CityScene({
       className="relative h-full min-h-[420px] w-full overflow-hidden"
       style={{
         background:
-          'radial-gradient(120% 90% at 50% 40%, #fff3d6 0%, #a9d8fb 78%)',
+          'radial-gradient(120% 90% at 50% 40%, var(--sky-in, #fff3d6) 0%, var(--sky-out, #a9d8fb) 78%)',
       }}
     >
+      {/* Bintang & bulan: di belakang canvas (canvas transparan), muncul saat malam. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{ backgroundImage: STARS_BG, opacity: 'var(--night, 0)' }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute right-[16%] top-[12%] h-9 w-9 rounded-full"
+        style={{
+          opacity: 'var(--night, 0)',
+          background:
+            'radial-gradient(circle at 35% 35%, #fffdf0, #e6e2c8 70%)',
+          boxShadow: '0 0 18px 6px rgba(230,236,255,.35)',
+        }}
+      />
       <div ref={labelsRef} className="pointer-events-none absolute inset-0" />
 
-      <div className="pointer-events-none absolute left-3 top-2.5 z-10 flex max-w-[70%] flex-wrap gap-x-2.5 gap-y-1 rounded-xl bg-white/80 px-2.5 py-1.5 text-[11px] font-medium text-[#4a516d] shadow-sm">
+      <div
+        className="pointer-events-none absolute left-3 top-2.5 z-10 flex max-w-[70%] flex-wrap gap-x-2.5 gap-y-1 rounded-xl px-2.5 py-1.5 text-[11px] font-medium shadow-sm"
+        style={{
+          background: 'var(--ui-bg, rgba(255,255,255,.8))',
+          color: 'var(--ui-fg, #4a516d)',
+        }}
+      >
         {DISTRICT_ORDER.map((d) => (
           <span key={d} className="inline-flex items-center gap-1.5">
             <i
@@ -1688,13 +1843,38 @@ export function CityScene({
       </div>
 
       <div className="absolute right-3 top-2 z-10 flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() =>
+            setMode((m) =>
+              m === 'auto' ? 'day' : m === 'day' ? 'night' : 'auto',
+            )
+          }
+          aria-label={`Time of day: ${mode}. Click to change`}
+          title={
+            mode === 'auto'
+              ? 'Time of day: auto (follows your local time)'
+              : `Time of day: ${mode} (click to change)`
+          }
+          className="h-6 min-w-6 rounded-full px-1.5 text-[12px] leading-none shadow-sm transition hover:brightness-110"
+          style={{
+            background: 'var(--ui-btn, rgba(255,255,255,.9))',
+            color: 'var(--ui-fg, #4a516d)',
+          }}
+        >
+          {mode === 'auto' ? 'Auto' : mode === 'day' ? '☀' : '☾'}
+        </button>
         {([-1, 1] as const).map((dir) => (
           <button
             key={dir}
             type="button"
             onClick={() => nudgeRef.current?.(dir)}
             aria-label={dir === 1 ? 'Rotate right' : 'Rotate left'}
-            className="h-6 w-6 rounded-full bg-white/90 text-[14px] leading-none text-[#4a516d] shadow-sm transition-colors hover:bg-white hover:text-[#2b3257]"
+            className="h-6 w-6 rounded-full text-[14px] leading-none shadow-sm transition hover:brightness-110"
+            style={{
+              background: 'var(--ui-btn, rgba(255,255,255,.9))',
+              color: 'var(--ui-fg, #4a516d)',
+            }}
           >
             {dir === 1 ? '›' : '‹'}
           </button>

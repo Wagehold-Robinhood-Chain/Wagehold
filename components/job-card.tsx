@@ -26,8 +26,8 @@ interface JobCardProps {
    *  saat JobCard dipakai *di dalam* Page D sendiri supaya tidak me-link ke
    *  dirinya sendiri. */
   linkToDetail?: boolean;
-  /** Tampil sebagai kartu mandiri (border + sudut membulat + hover) untuk grid Job
-   *  Board. Default false = baris dengan garis bawah seperti sebelumnya. */
+  /** Tampil sebagai kartu mandiri (border + sudut membulat + hover) hanya saat
+   *  wadah induk (`@container`) selebar >= 48rem. Di bawah itu tetap baris. */
   card?: boolean;
   /** true untuk job yang sudah di-seal milik orang lain: kartu tetap tampil di
    *  daftar, tapi judul tidak jadi link dan detailnya terkunci. */
@@ -90,11 +90,13 @@ export function JobCard({
   return (
     <div
       className={cn(
-        'flex flex-col gap-1.5 px-3.5 py-3 transition-colors duration-500',
-        card
-          ? 'h-full gap-2 rounded-xl border border-line bg-surface-2/50 p-4 hover:border-[#46507a]'
-          : 'border-b border-line',
-        isReview && (card ? 'border-warn/40 bg-warn/[0.06]' : 'bg-warn/[0.06]'),
+        'flex flex-col gap-1.5 border-b border-line px-3.5 py-3 transition-colors duration-500',
+        // Mode kartu hanya aktif kalau wadahnya lebar (Job Board layar penuh);
+        // di panel sempit / mobile tetap baris seperti semula.
+        card &&
+          '@3xl:h-full @3xl:gap-2 @3xl:rounded-xl @3xl:border @3xl:bg-surface-2/50 @3xl:p-4 @3xl:hover:border-[#46507a]',
+        isReview && 'bg-warn/[0.06]',
+        isReview && card && '@3xl:border-warn/40',
       )}
     >
       <div className="flex items-start justify-between gap-2.5">
@@ -163,7 +165,7 @@ export function JobCard({
           >
             <p className="text-[11.5px] text-warn">
               The Wright has delivered. Read the deliverable, rate the work (★)
-              required then set the seal.
+              — required — then set the seal.
             </p>
             <Link href={`/jobs/${job.id}#seal`} className="w-fit">
               <Button variant="primary" size="small">

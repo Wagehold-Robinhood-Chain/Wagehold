@@ -149,7 +149,7 @@ export function JobBoard({
         </p>
       )}
 
-      <PanelScroll>
+      <PanelScroll className="@container">
         {showConnectPrompt ? (
           <JobBoardEmpty kind="wallet" />
         ) : visible.length === 0 ? (
@@ -160,7 +160,7 @@ export function JobBoard({
           // dulu (exit), dan job baru yang masuk ke tab ini ikut fade in.
           <motion.div
             key={tab}
-            className="mx-auto grid w-full max-w-[1400px] grid-cols-1 gap-3 p-3 md:grid-cols-2 xl:grid-cols-3"
+            className="flex flex-col @3xl:mx-auto @3xl:grid @3xl:w-full @3xl:max-w-[1400px] @3xl:grid-cols-2 @3xl:gap-3 @3xl:p-3 @5xl:grid-cols-3"
             variants={listVariants}
             initial="hidden"
             animate="visible"
@@ -175,7 +175,7 @@ export function JobBoard({
                     height: 0,
                     transition: { duration: 0.25 },
                   }}
-                  className="overflow-hidden rounded-xl"
+                  className="overflow-hidden @3xl:rounded-xl"
                 >
                   <JobCard
                     job={job}

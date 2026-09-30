@@ -93,6 +93,31 @@ export function ConnectWalletLink() {
   return <ConnectWalletLinkActive />;
 }
 
+function ConnectWalletButtonActive() {
+  const { open } = useAppKit();
+  return (
+    <Button variant="primary" onClick={() => open()}>
+      Connect wallet
+    </Button>
+  );
+}
+
+/** Tombol besar "Connect wallet" untuk empty state (Job Board). */
+export function ConnectWalletButton() {
+  if (!isWeb3Configured) {
+    return (
+      <Button
+        variant="primary"
+        disabled
+        title="Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in .env.local to enable wallet connect"
+      >
+        Connect wallet
+      </Button>
+    );
+  }
+  return <ConnectWalletButtonActive />;
+}
+
 function WalletConnectActive() {
   const { open } = useAppKit();
   const { address, isConnected } = useAppKitAccount();

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { motion } from 'motion/react';
 import { Button } from '@/components/ui/button';
-import { ConnectWalletLink } from '@/components/wallet-connect';
+import { ConnectWalletButton } from '@/components/wallet-connect';
 
 export type EmptyKind = 'review' | 'working' | 'open' | 'paid' | 'wallet';
 
@@ -74,7 +74,7 @@ const COPY: Record<
   },
   wallet: {
     title: 'Connect your wallet',
-    text: 'Your wallet is your account. Connect it to see and manage your own jobs.',
+    text: 'Your wallet is your account. Connect it to see and manage your own jobs, and to set the seal on finished work.',
     cta: 'wallet',
   },
 };
@@ -125,8 +125,8 @@ export function JobBoardEmpty({ kind }: { kind: EmptyKind }) {
           </Link>
         )}
         {c.cta === 'wallet' && (
-          <span className="mt-2 text-[13px]">
-            <ConnectWalletLink />
+          <span className="mt-2">
+            <ConnectWalletButton />
           </span>
         )}
       </motion.div>

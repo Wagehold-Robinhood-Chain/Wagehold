@@ -143,7 +143,7 @@ export function JobBoard({
         onChange={(id) => setTab(id as TabId)}
       />
 
-      {needsWallet && (
+      {needsWallet && !showConnectPrompt && (
         <p className="border-b border-line bg-surface-2 px-3.5 py-2 text-[11.5px] text-faint">
           <ConnectWalletLink /> to see and manage your own jobs.
         </p>

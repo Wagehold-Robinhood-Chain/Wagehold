@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getInitialUserId } from '@/lib/identity/server';
+import { isWalletMode } from '@/lib/identity/mode';
 import {
   getJobById,
   getAgentById,
@@ -62,7 +63,13 @@ export default async function JobDetailPage({
   // mismatch antara locale/timezone server vs browser. Event yang datang
   // belakangan lewat Realtime diformat di browser (lihat
   // realtime-job-detail.tsx) -- baris itu memang tidak pernah ikut SSR.
-  const eventList: JobDetailEvent[] = events.map((e) => ({
+  // Job sealed milik orang lain: jangan kirim brief/deliverable/ledger ke browser.
+  // Hanya bisa diputuskan di server pada mode simulasi (cookie); di mode wallet
+  // server tidak tahu siapa pembukanya, jadi gerbangnya di client (JobDetail).
+  const hidePrivate =
+    !isWalletMode && job.status === 'paid' && initialUserId !== job.client_id;
+
+  const eventList: JobDetailEvent[] = (hidePrivate ? [] : events).map((e) => ({
     id: e.id,
     actorLabel: e.actor,
     text: e.note ?? e.type,
@@ -80,12 +87,12 @@ export default async function JobDetailPage({
       district={job.district}
       agentCode={agent?.code}
       budgetUsdc={Number(job.budget_usdc)}
-      brief={job.brief}
+      brief={hidePrivate ? '' : job.brief}
       agent={agent}
       initialStatus={job.status}
       initialProgress={job.progress}
-      initialDeliverable={job.deliverable}
-      escrowTx={job.escrow_tx}
+      initialDeliverable={hidePrivate ? null : job.deliverable}
+      escrowTx={hidePrivate ? null : job.escrow_tx}
       initialEvents={eventList}
       clientId={job.client_id}
       initialUserId={initialUserId}

@@ -57,10 +57,15 @@ export function JobBoard({
   needsWallet: boolean;
 }) {
   const router = useRouter();
-  // Job Board per pemilik: hanya job milik wallet / browser ini. Filter di sini
-  // (bukan di pemanggil) supaya City Dashboard -- yang tetap butuh semua job
-  // untuk statistik kota -- juga hanya menampilkan job milik sendiri di panel ini.
-  const items = useMemo(() => allItems.filter((i) => i.isOwnJob), [allItems]);
+  // Job Board per pemilik: tab Awaiting seal / In progress / Open hanya berisi job
+  // milik wallet / browser ini. Tab Sealed pengecualian: menampilkan seal SEMUA
+  // orang (transparansi kota), tapi detailnya terkunci untuk yang bukan pemilik
+  // (lihat `locked` di JobCard dan gerbang di JobDetail).
+  const items = useMemo(
+    () =>
+      allItems.filter((i) => (i.job.status === 'paid' ? true : i.isOwnJob)),
+    [allItems],
+  );
   const [tab, setTab] = useState<TabId>('review');
   const [pending, setPending] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -87,6 +92,8 @@ export function JobBoard({
   }));
 
   const visible = items.filter(({ job }) => job.status === tab);
+  // Tab Sealed terbuka untuk semua, jadi tidak perlu wallet untuk melihatnya.
+  const showConnectPrompt = needsWallet && tab !== 'paid';
 
   async function callJobAction(
     job: JobSummary,
@@ -152,7 +159,7 @@ export function JobBoard({
       )}
 
       <PanelScroll>
-        {needsWallet ? (
+        {showConnectPrompt ? (
           <EmptyState>Connect your wallet to see your jobs.</EmptyState>
         ) : visible.length === 0 ? (
           <EmptyState>{EMPTY_COPY[tab]}</EmptyState>
@@ -182,6 +189,7 @@ export function JobBoard({
                   <JobCard
                     job={job}
                     isOwnJob={isOwnJob}
+                    locked={job.status === 'paid' && !isOwnJob}
                     busy={pending[job.id]}
                     busyLabel={steps[job.id]}
                     error={errors[job.id]}

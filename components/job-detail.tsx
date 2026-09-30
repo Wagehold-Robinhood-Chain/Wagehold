@@ -129,8 +129,7 @@ export function JobDetail({
           typeof noteOrRating === 'number' ? noteOrRating : undefined,
         );
       } else {
-        const note =
-          typeof noteOrRating === 'string' ? noteOrRating : '';
+        const note = typeof noteOrRating === 'string' ? noteOrRating : '';
         await sendBack(job, note, setStep);
       }
       // Job dan Ledger di bawah sama-sama Server Component -- refresh
@@ -142,6 +141,43 @@ export function JobDetail({
       setBusy(false);
       setStep(undefined);
     }
+  }
+
+  // Job yang sudah di-seal terlihat di daftar oleh semua orang, tapi isinya
+  // (brief, deliverable, ledger, escrow) hanya untuk client yang membuatnya.
+  const locked = job.status === 'paid' && !isOwnJob;
+
+  if (locked) {
+    return (
+      <div className="flex flex-col gap-3">
+        <Panel>
+          <PanelHeader title="Job" />
+          <JobCard job={job} linkToDetail={false} locked />
+          <div className="flex flex-col gap-2 px-3.5 py-3">
+            <p className="text-[13px] text-muted">
+              This job has been sealed. Its brief, deliverable and ledger are
+              private to the client who posted it.
+            </p>
+            {needsWallet && (
+              <p className="text-[11.5px] text-faint">
+                <ConnectWalletLink /> the wallet that posted this job to view
+                its details.
+              </p>
+            )}
+            {agent && (
+              <Link
+                href={`/agents/${agent.id}`}
+                className="flex w-fit items-center gap-2 text-[13px] text-text hover:underline"
+              >
+                <span>{agent.name}</span>
+                <Chip variant="sigil">{agent.code}</Chip>
+                <Chip variant="rank">{RANK_LABEL[agent.rank]}</Chip>
+              </Link>
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
   }
 
   const deliverablePanel = deliverable ? (

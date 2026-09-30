@@ -25,6 +25,9 @@ interface JobCardProps {
    *  saat JobCard dipakai *di dalam* Page D sendiri supaya tidak me-link ke
    *  dirinya sendiri. */
   linkToDetail?: boolean;
+  /** true untuk job yang sudah di-seal milik orang lain: kartu tetap tampil di
+   *  daftar, tapi judul tidak jadi link dan detailnya terkunci. */
+  locked?: boolean;
   /** Rating (1-5) untuk Wright di job ini ikut dikirim saat Set the seal --
    *  dipakai untuk Client rating di Wright profile (lib/agent-stats.ts).
    *  Opsional: undefined kalau job tidak punya agent untuk di-rate. */
@@ -56,6 +59,7 @@ export function JobCard({
   busyLabel,
   error,
   linkToDetail = true,
+  locked = false,
   onSetSeal,
   onSendBack,
 }: JobCardProps) {
@@ -79,7 +83,7 @@ export function JobCard({
       )}
     >
       <div className="flex items-start justify-between gap-2.5">
-        {linkToDetail ? (
+        {linkToDetail && !locked ? (
           <Link
             href={`/jobs/${job.id}`}
             className="text-[13.5px] font-medium text-text hover:underline"
@@ -102,6 +106,15 @@ export function JobCard({
           {job.agentCode ? ` · ${job.agentCode}` : ''}
         </span>
       </div>
+
+      {locked && (
+        <p className="flex items-center gap-1.5 text-[11.5px] text-faint">
+          <span aria-hidden>🔒</span>
+          <span>
+            Sealed. Details are visible only to the client who posted it.
+          </span>
+        </p>
+      )}
 
       {(job.status === 'open' || job.status === 'working') && (
         <div className="flex items-center gap-1.5 text-[11.5px] text-muted">

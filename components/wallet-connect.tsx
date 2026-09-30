@@ -1,11 +1,38 @@
-"use client";
+'use client';
 
-import { useAppKit, useAppKitAccount, useAppKitNetwork } from "@reown/appkit/react";
-import { useDisconnect } from "wagmi";
-import { Button } from "@/components/ui/button";
-import { SUPPORTED_CHAIN_IDS } from "@/lib/web3/chains";
-import { isWeb3Configured } from "@/lib/web3/config";
-import { isWalletMode } from "@/lib/identity/mode";
+import {
+  useAppKit,
+  useAppKitAccount,
+  useAppKitNetwork,
+} from '@reown/appkit/react';
+import { useDisconnect } from 'wagmi';
+import { Button } from '@/components/ui/button';
+import { SUPPORTED_CHAIN_IDS } from '@/lib/web3/chains';
+import { isWeb3Configured } from '@/lib/web3/config';
+import { isWalletMode } from '@/lib/identity/mode';
+import { X_URL } from '@/lib/social';
+
+/** Tombol ikon X di header -- membuka akun X Wagehold di tab baru. */
+function XLink() {
+  return (
+    <a
+      href={X_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="Wagehold on X"
+      title="Follow on X"
+      className="flex h-[26px] w-[30px] items-center justify-center rounded-[7px] border border-line bg-surface-2 text-text transition-colors hover:border-[#46507a]"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        className="h-3.5 w-3.5 fill-current"
+      >
+        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+      </svg>
+    </a>
+  );
+}
 
 function truncate(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -80,14 +107,15 @@ function WalletConnectActive() {
     );
   }
 
-  const wrongNetwork = typeof chainId === "number" && !SUPPORTED_CHAIN_IDS.has(chainId);
+  const wrongNetwork =
+    typeof chainId === 'number' && !SUPPORTED_CHAIN_IDS.has(chainId);
 
   if (wrongNetwork) {
     return (
       <Button
         size="small"
         className="border-[#d97a4a] text-[#d97a4a] hover:border-[#d97a4a]"
-        onClick={() => open({ view: "Networks" })}
+        onClick={() => open({ view: 'Networks' })}
       >
         Wrong network -- switch
       </Button>
@@ -96,7 +124,7 @@ function WalletConnectActive() {
 
   return (
     <div className="flex items-center gap-1.5">
-      <Button size="small" onClick={() => open({ view: "Account" })}>
+      <Button size="small" onClick={() => open({ view: 'Account' })}>
         {truncate(address)}
       </Button>
       <button
@@ -136,5 +164,10 @@ export function WalletConnect() {
     content = <WalletConnectActive />;
   }
 
-  return <div className="ml-auto flex items-center gap-2">{content}</div>;
+  return (
+    <div className="ml-auto flex items-center gap-2">
+      <XLink />
+      {content}
+    </div>
+  );
 }

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { LoginForm } from '@/components/login-form';
 import { Panel, PanelHeader } from '@/components/ui/panel';
 import { SiteNav } from '@/components/site-nav';
+import { SiteLogo } from '@/components/site-logo';
 import {
   MotionPage,
   MotionHeader,
@@ -27,9 +28,7 @@ export default async function LoginPage({
   return (
     <MotionPage className="flex h-screen flex-col gap-3 p-3">
       <MotionHeader className="flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-xl font-bold tracking-tight">
-          Wagehold
-        </h1>
+        <SiteLogo />
         <SiteNav />
         <p className="ml-auto hidden text-[13px] italic text-muted sm:block">
           Work sealed. Wages shared.

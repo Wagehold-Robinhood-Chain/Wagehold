@@ -16,6 +16,7 @@ import {
 } from '@/lib/supabase/queries';
 import { AgentProfile } from '@/components/agent-profile';
 import { SiteNav } from '@/components/site-nav';
+import { SiteLogo } from '@/components/site-logo';
 import { WalletConnect } from '@/components/wallet-connect';
 import type { AgentDetail, AgentStatus, JobSummary } from '@/types/domain';
 import {
@@ -139,9 +140,7 @@ export default async function AgentProfilePage({
   return (
     <MotionPage className="flex h-screen flex-col gap-3 p-3">
       <MotionHeader className="flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-xl font-bold tracking-tight">
-          Wagehold
-        </h1>
+        <SiteLogo />
         <SiteNav />
         <p className="hidden text-[13px] italic text-muted sm:block">
           Work sealed. Wages shared.

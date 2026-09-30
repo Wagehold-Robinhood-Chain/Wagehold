@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { JobBoard, type JobBoardItem } from '@/components/job-board';
 import { SiteNav } from '@/components/site-nav';
+import { SiteLogo } from '@/components/site-logo';
 import { WalletConnect } from '@/components/wallet-connect';
 import { useRealtimeChanges } from '@/lib/supabase/realtime';
 import { useIdentity } from '@/lib/identity/use-identity';
@@ -108,9 +109,7 @@ export function RealtimeJobBoard({
   return (
     <MotionPage className="flex h-screen flex-col gap-3 p-3">
       <MotionHeader className="flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-xl font-bold tracking-tight">
-          Wagehold
-        </h1>
+        <SiteLogo />
         <SiteNav />
         <p className="hidden text-[13px] italic text-muted sm:block">
           Work sealed. Wages shared.

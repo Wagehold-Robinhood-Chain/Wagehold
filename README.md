@@ -1,335 +1,325 @@
-# Wagehold
+<div align="center">
 
-> Work sealed. Wages shared.
+<img src="./public/logo.png" width="130" height="130" alt="Wagehold Logo" />
 
-Fase 1 (rebuild `wagehold-prototype.html` jadi produk sungguhan) selesai semua. Stack: **Next.js 16 (App Router) + Tailwind v4 + Motion (dulu Framer Motion) + Supabase**, versi terbaru per 26 September 2026.
+# WAGEHOLD
 
-Fase 2 (Strongbox on Testnet) sudah dimulai -- kontrak Solidity ada di workspace Foundry terpisah, `contracts/` (lihat `contracts/README.md`). Belum ada sambungan apa pun ke app Next.js di bawah ini; payout masih simulasi database sampai Fase 2 item 6-7 selesai.
+**A City of AI Agents That Do Paid Work, With Every Wage Held in Escrow**
 
-## Menjalankan setup ini
+*Work sealed. Wages shared.*
+
+[![Framework](https://img.shields.io/badge/Framework-Next.js%2016%20(App%20Router)-000000?style=flat-square&logo=nextdotjs&logoColor=white&labelColor=0D1530)](#-tech-stack)
+[![Network](https://img.shields.io/badge/Network-Robinhood%20Chain%20·%204663-1A9E4B?style=flat-square&labelColor=0D1530)](#-smart-contracts)
+[![Language](https://img.shields.io/badge/Language-TypeScript%20·%20Solidity-3178C6?style=flat-square&logo=typescript&logoColor=white&labelColor=0D1530)](#-tech-stack)
+[![Database](https://img.shields.io/badge/Database-Supabase%20·%20Postgres-3ECF8E?style=flat-square&logo=supabase&logoColor=white&labelColor=0D1530)](#-tech-stack)
+[![LLM](https://img.shields.io/badge/LLM-Gemini-4285F4?style=flat-square&logo=googlegemini&logoColor=white&labelColor=0D1530)](#-how-it-works)
+[![Token](https://img.shields.io/badge/Token-%24WAGE-F5B942?style=flat-square&labelColor=0D1530)](#-the-wage-split)
+[![Styling](https://img.shields.io/badge/Styling-Tailwind%20v4%20·%20Motion%20·%20Three.js-38BDF8?style=flat-square&labelColor=0D1530)](#-tech-stack)
+[![Deploy](https://img.shields.io/badge/Deploy-Vercel-black?style=flat-square&logo=vercel&logoColor=white&labelColor=0D1530)](#-deploying-to-vercel)
+[![License](https://img.shields.io/badge/License-Unspecified-lightgrey?style=flat-square&labelColor=0D1530)](#-license--disclaimer)
+
+</div>
+
+---
+
+**Wagehold** is a city of AI agents, called **Wrights**, that take on paid jobs for a single token, **$WAGE**. A client posts a job and locks the wage in escrow (the **Strongbox**). A Wright does the work. Nothing is paid until the client reviews the deliverable and **sets the seal**. When the seal is set, the wage is split between the building's patrons, the treasury, and the **Furnace**, which burns part of every wage.
+
+The city is live as an isometric 3D scene: one building per Wright, grouped into five **Wards**, with a real-time **Ledger Wall** recording every action as it happens. Built on Next.js 16 (App Router) · TypeScript · Tailwind v4 · Supabase · Gemini · Foundry, targeting **Robinhood Chain** (Ethereum L2, chain ID `4663`).
+
+**Live build:** [wagehold-v22e.vercel.app](https://wagehold-v22e.vercel.app/)
+
+---
+
+## 🏛️ Core Value Proposition
+
+Hiring an AI agent today means trusting a black box with your money and hoping the output is worth it:
+
+* **The Pay-Before-Proof Problem:** Most agent marketplaces take payment up front. If the work is bad, the money is already gone.
+* **The Black-Box Problem:** You rarely see who did the work, what they were asked, or what happened between "paid" and "delivered".
+* **The Who-Profits Problem:** Agent revenue disappears into a platform. The people who back an agent never share in what it earns.
+
+Wagehold addresses this with one escrow-first flow:
+
+* **Escrow Before Work:** The wage is locked in the Strongbox when the job is posted. The client, and only the client, can release it.
+* **The Seal Gate:** A Wright's deliverable goes to `review`. The client either **sets the seal** (pay) or **sends the work back** with a note (revise).
+* **A Ledger That Never Lies:** Every action (assigned, submitted, sent back, sealed, split) is written to the Ledger and pushed live to every open tab.
+* **Patrons Share the Upside:** Anyone can stake $WAGE on a building and receive a pro rata share of the patron portion of every wage it earns.
+
+---
+
+## 🔍 What Powers Every Job
+
+| Module | Source | What It Does |
+|---|---|---|
+| **1. The Wrights** | Gemini via `lib/agents/gemini.ts` | 20 AI agents across 5 Wards. Each has its own system prompt and Charter limits (no invented sources, no buy/sell calls). |
+| **2. The Strongbox** | `contracts/src/WageholdStrongbox.sol` | On-chain escrow: `createJob`, `approve` (set the seal), `refund`, `dispute`. Pull-payment only. |
+| **3. The Splitter** | `contracts/src/WageholdSplitter.sol` | Splits each sealed wage 60/20/10/10 and books the Furnace share for burning. |
+| **4. The Ledger** | Supabase Realtime (`lib/supabase/realtime.ts`) | Pushes job, agent, and event changes to every open tab over WebSocket. No refresh needed. |
+| **5. Identity** | `lib/identity/*` | No login. A browser ID in simulation mode, a connected wallet in on-chain mode. |
+| **6. Patronage** | `lib/patronage.ts`, `stakes` table | Stake $WAGE on a building, earn a pro rata share of its patron portion. |
+
+### The Five Wards
+
+| Ward | Focus |
+|---|---|
+| **Research** | Due diligence and deep dives |
+| **Chain** | On-chain analytics and wallet tracking |
+| **Craft** | Threads, campaigns, and copy |
+| **Watch** | Contract and multisig review |
+| **Hearth** | Moderation and community ops |
+
+---
+
+## 🔑 The Wage Split
+
+Every wage is split the same way when the seal is set. The split is fixed and is **not** set per agent (`WAGE_SPLIT` in `lib/currency.ts`, mirrored by the Splitter contract).
+
+| Share | Destination |
+|---|---|
+| **60%** | **Patrons** of the building that did the work, pro rata to stake |
+| **20%** | **Lamp Oil** treasury |
+| **10%** | **Tithe** treasury |
+| **10%** | **Furnace**, burned permanently |
+
+### The Charter
+
+Baked into the app and the contracts:
+
+> **Article I:** Only the client can set the seal.
+> **Article II:** The Council that settles disputes is a human key, never an agent.
+> **Article III:** Posting a job locks the wage.
+> **Article IV:** Every action is recorded in the Ledger.
+
+- A **Bond** is locked by each building and slashed if it loses a dispute.
+- If a Wright fails (API error, timeout), the job returns to `open`, an `error` event is logged, and the **wage stays safe in the Strongbox**.
+- Wrights may not promise returns, give buy/sell advice, or invent sources and numbers.
+
+### Job lifecycle
+
+```
+Post a job ──► wage locked (Strongbox) ──► selectWright() ──► Wright works (Gemini)
+                                                                     │
+                                                                  review
+                                                        ┌────────────┴────────────┐
+                                                   Send back                 Set the seal
+                                                (note required,                   │
+                                              Wright redoes it)        approve() on-chain
+                                                        │                         │
+                                                   back to work          pullAndSplit()
+                                                                    60 / 20 / 10 / 10
+```
+
+---
+
+## 🖥️ How It Works
+
+```
+[Client posts job] ──► [Strongbox: wage locked] ──► jobs table ──┐
+                                                                  ├─► [selectWright] ──► [Gemini Wright] ──► deliverable
+[Supabase Realtime] ◄── jobs / job_events / agents ◄─────────────┘                                              │
+        │                                                                                                        ▼
+        └──► City · Job Board · Job Detail (live)                                          [Client: Set the seal / Send back]
+                                                                                                                  │
+                                                                                     [approve() ──► Splitter ──► 60/20/10/10]
+```
+
+* **Wright routing.** `selectWright()` picks the non-Warden Wright with the fewest active jobs in the job's Ward. Ties go to the higher rank, then alphabetical by code.
+* **Send back reruns the work.** The same Wright is called again with the client's revision note added to the prompt.
+* **Ranks are earned.** A Wright's rank comes from `deriveRank()` (sealed jobs plus real ratings), not from seed data.
+* **Live everywhere.** Status, progress, deliverable, and Ledger events update in real time, including from another tab or device.
+
+### Identity (no login)
+
+There is no sign-in, magic link, or Supabase Auth. Who owns a job depends on the mode, chosen automatically from env (`lib/identity/mode.ts`).
+
+| | Simulation mode (default) | Wallet mode |
+|---|---|---|
+| Active when | Strongbox / token env vars are empty | `NEXT_PUBLIC_STRONGBOX_ADDRESS` and `NEXT_PUBLIC_WAGE_TOKEN_ADDRESS` are set |
+| Header | *Simulation · this browser* badge | **Connect wallet** button |
+| Job owner | `sim:<hash>` from an httpOnly browser cookie | Lowercase wallet address that locked the wage |
+| Post a job | Wage recorded in the database only | Wage locked on-chain first, then verified by the server |
+| Set the seal | Server matches the browser cookie to the job creator | Wallet signs a message, then `approve()` is sent on-chain |
+
+### Set the seal, on-chain
+
+For jobs with an on-chain escrow, setting the seal releases real funds in three steps (`lib/web3/set-the-seal.ts`):
+
+1. **`POST /api/jobs/:id/seal/prepare`**: the Council key registers the payee (and the job in the Splitter). The payee is read from the database, never from the request body.
+2. **The client's wallet sends `approve(jobId)`** to the Strongbox. Only the wallet that locked the wage can do this.
+3. **`POST /api/jobs/:id/approve`** with the `sealTx`: the server re-reads the chain (`verify-release.ts`) and only then marks the job `paid`. After that, `pullAndSplit` runs. If the split fails, the seal still stands and a `split_pending` event is logged.
+
+---
+
+## 📜 Smart Contracts
+
+The Foundry workspace lives in `contracts/` (see `contracts/README.md`).
+
+| Contract | Role |
+|---|---|
+| **`WageholdStrongbox`** | Escrow. `createJob`, `setPayee`, `approve`, `refund`, `dispute`, `resolveDispute`. Uses pull-payment so a contract payee can never block a release. |
+| **`WageholdSplitter`** | Splits each wage 60/20/10/10. `registerJob`, `pullAndSplit` (permissionless), `withdraw`, permissionless `burn()` for the Furnace share. |
+
+- **Tested:** 46 Forge tests pass (24 Strongbox, 22 Splitter), including fuzz tests of 10,000 runs. Slither reports no findings against the contracts' own code.
+- **Job IDs:** `jobId = keccak256(bytes(uuid))`, so a database job maps 1:1 to an escrow.
+- **Chains:** Robinhood Chain testnet (`46630`) and mainnet (`4663`). Gas is paid in ETH.
+- **Explorer:** Blockscout. Verify with `forge verify-contract --verifier blockscout`.
+
+---
+
+## 🏗️ Project Layout
+
+```
+app/
+  page.tsx               City Dashboard (3D scene, stats, Ledger Wall)
+  jobs/                  Job Board · /jobs/new (Post a job) · /jobs/[id] (Seal Gate)
+  agents/[id]/           Wright Profile
+  api/
+    agents/              GET list, GET one, POST stake
+    jobs/                GET list, POST create, GET one, approve/, revise/, seal/prepare/
+components/
+  ui/                    Panel, Button, Badge, Chip, StatusPill, ProgressBar, EmptyState
+  realtime-*.tsx         Live versions of the City, Job Board, and Job Detail
+  city-scene.tsx         Three.js isometric city
+  patronage-section.tsx  Stake / unstake, Bond line
+  site-logo.tsx          Logo + wordmark used in every header
+lib/
+  currency.ts            $WAGE labels and the 60/20/10/10 split
+  agents/                Gemini client, wright-runtime (assign, run, revise, selectWright)
+  identity/              Simulation vs wallet mode, cookie + signature auth
+  supabase/              Clients, shared queries, Realtime hook
+  web3/                  Chains, wagmi config, lock-wage, set-the-seal, verify-lock/release
+  patronage.ts           Stake math and limits
+supabase/migrations/     0001 to 0013 (schema, seed, RLS hardening, realtime, stakes / Furnace / Bond)
+contracts/               Foundry workspace: Strongbox, Splitter, tests, deploy script
+scripts/                 e2e-testnet.ts, e2e-local.sh
+proxy.ts                 Gives each browser a wh_sim cookie (not an auth layer)
+public/                  Logo
+```
+
+### 🏦 Patronage, Furnace & Bond
+
+- **Patronage:** a patron stakes $WAGE on a building (Wright) and shares its 60% patron portion pro rata to stake. Limits: 1,000,000 per action and 5,000,000 per building per patron.
+- **Furnace:** 10% of every sealed wage is booked and burned.
+- **Bond:** each building locks a Bond of $WAGE, slashed if it loses a dispute.
+- Patronage is **simulation-only for now**: stakes are rows in the `stakes` table and no tokens move yet.
+
+---
+
+## 💻 Tech Stack
+
+### Frontend & UI
+- **Framework:** Next.js 16 (App Router) with TypeScript, React 19.
+- **Styling:** Tailwind CSS v4 (tokens in `app/globals.css` via `@theme`).
+- **Motion:** Motion (`motion/react`, formerly Framer Motion).
+- **3D:** Three.js for the isometric city.
+- **Fonts:** Bricolage Grotesque, IBM Plex Sans, Martian Mono.
+
+### Backend & Data
+- **Database:** Supabase (Postgres) with Realtime. Browsers can only read. All writes go through Route Handlers with the service role key.
+- **LLM Provider:** Google Gemini (free tier of AI Studio), called over REST from `lib/agents/gemini.ts`. Swapping to another provider means one new file and one import.
+- **Web3:** wagmi, viem, and Reown AppKit (WalletConnect) on Robinhood Chain.
+- **Contracts:** Solidity 0.8.24 with Foundry and OpenZeppelin v5.
+- **Hosting:** Vercel.
+
+---
+
+## ⚙️ Getting Started
+
+### Prerequisites
+- **Node.js:** v20 or higher
+- **A Supabase project** (free tier is fine)
+- **Gemini API key** from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) for the Wrights
+- **Foundry** (only if you want to work on the contracts)
+
+### Quick Start
 
 ```bash
 npm install
 cp .env.local.example .env.local
-# isi NEXT_PUBLIC_SUPABASE_URL & NEXT_PUBLIC_SUPABASE_ANON_KEY dari Supabase dashboard
-# isi NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID dari https://cloud.reown.com (gratis) -- opsional
-#   untuk menjalankan app, tapi tanpa ini tombol "Connect wallet" nonaktif
+# fill in the Supabase URL, anon key, and service role key at minimum
 npm run dev
 ```
 
-Buka `http://localhost:3000` — akan muncul kartu "Setup check" yang memverifikasi Tailwind, Framer Motion, koneksi Supabase, dan env wallet connect.
+1. Run the migrations in `supabase/migrations/` **in order (0001 to 0013)** through the Supabase SQL editor. They create the schema, seed the 20 Wrights across 5 Wards, harden RLS, enable Realtime, and add stakes, Furnace, and Bond.
+2. Add `GEMINI_API_KEY` so the Wrights can work. Without it, jobs are created but fail safely back to `open`.
+3. Optional: add `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` (free from [cloud.reown.com](https://cloud.reown.com)) to enable the Connect wallet button.
 
-## Supabase
+Open `http://localhost:3000` for the City Dashboard.
 
-1. Buat project baru di [supabase.com](https://supabase.com).
-2. Jalankan `supabase/migrations/0001_init.sql` lewat SQL editor (bikin tabel `agents`, `jobs`, `job_events` sesuai data model di `wagehold-handoff.md` §5).
-3. Setelah schema jadi, generate tipe TypeScript yang sesungguhnya:
-   ```bash
-   npx supabase login
-   npm run supabase:types
-   ```
-   Ini akan menimpa `types/database.ts` (yang sekarang masih placeholder manual).
-4. Isi tabel `agents` dengan roster demo dari `wagehold-handoff.md` §7 (20 Wright, 5 Ward).
-5. **Tanpa login**: app tidak memakai Supabase Auth sama sekali (Provider Google/GitHub tidak perlu diaktifkan, `/login` dan `/auth/callback` sudah dihapus). Jalankan `supabase/migrations/0009_wallet_identity.sql` (setelah 0001-0008): mengubah `jobs.client_id` dari `uuid → auth.users` menjadi `text` supaya bisa berisi alamat wallet atau id browser. Lihat bagian **Identitas (tanpa login)** di bawah.
-6. **Nyalakan Realtime**: jalankan `supabase/migrations/0004_realtime_ledger.sql` (setelah 0001-0003), atau toggle manual di **Database → Replication** untuk tabel `jobs`, `job_events`, `agents` -- lihat bagian **Realtime Ledger Wall** di bawah.
+### Simulation vs on-chain
 
-## Struktur folder
+With the Strongbox and token env vars left empty, the app runs in **simulation mode**. Wages are recorded in Postgres only, no wallet is needed, and everything else works the same. To go on-chain, deploy the Strongbox with the $WAGE address (`contracts/`), then fill in `NEXT_PUBLIC_STRONGBOX_ADDRESS` and `NEXT_PUBLIC_WAGE_TOKEN_ADDRESS`. Full steps are in the comments of `.env.local.example`.
 
-```
-app/
-  layout.tsx        Root layout, font (Bricolage Grotesque, IBM Plex Sans, Martian Mono)
-  page.tsx           Page A — City Dashboard
-  agents/
-    [id]/
-      page.tsx           Page E — Wright Profile
-  jobs/
-    page.tsx           Page B — Job Board
-    new/
-      page.tsx           Page C — Post a Job
-    [id]/
-      page.tsx           Page D — Job Detail / Seal Gate
-  globals.css        Reset dasar + Tailwind layers
-  api/
-    agents/            GET /api/agents, GET /api/agents/[id]
-    jobs/               GET+POST /api/jobs, GET /api/jobs/[id], approve/, revise/
-components/
-  ui/                Panel, Button, Badge, Chip, StatusPill, ProgressBar, EmptyState
-  stat-bar.tsx, ledger-wall.tsx, job-tabs.tsx, job-card.tsx, job-board.tsx, job-detail.tsx,
-  revenue-split.tsx, sparkline.tsx, post-job-form.tsx, post-job-client.tsx, site-nav.tsx,
-  agent-profile.tsx, wallet-connect.tsx (identitas di header)
-  realtime-city-dashboard.tsx  Page A penuh, live lewat Supabase Realtime (Item 11)
-  realtime-job-board.tsx       Page B penuh, live lewat Supabase Realtime (Item 11)
-  realtime-job-detail.tsx      Page D penuh, live lewat Supabase Realtime (Item 11)
-lib/
-  cn.ts               Helper gabung className
-  supabase/
-    client.ts         Supabase client untuk Client Component
-    server.ts          Supabase client untuk Server Component / Route Handler (+ service role)
-    queries.ts          Query & mutasi bersama, dipakai semua Route Handler
-    realtime.ts          Hook `useRealtimeChanges` -- subscribe postgres_changes (Item 11)
-    use-current-user-id.ts  Hook lacak user id lewat onAuthStateChange (dipakai komponen realtime)
-  agents/
-    gemini.ts           Klien REST tipis ke Gemini API (tier gratis)
-    research-wright.ts  Runtime Deepdive (DIVE) -- assign, panggil Gemini, tulis deliverable + Ledger
-supabase/
-  migrations/
-    0001_init.sql      Schema awal: agents, jobs, job_events + RLS
-    0002_seed_agents.sql  Seed 20 Wright / 5 Ward (roster demo)
-    0003_research_wright_live.sql  Kolom `deliverable` + system_prompt/model Deepdive untuk Gemini
-    0004_realtime_ledger.sql  Nyalakan Supabase Realtime untuk jobs/job_events/agents (Item 11)
-    0005_harden_rls.sql       Cabut hak tulis browser ke jobs/agents/job_events; batas panjang title/brief
-types/
-  database.ts          Tipe DB (placeholder, ganti dengan hasil generate)
-  domain.ts             Tipe UI (AgentSummary, JobSummary, LedgerEvent, dst)
-proxy.ts                 Refresh sesi Supabase tiap request (dulu middleware.ts)
-eslint.config.mjs        Flat config ESLint 9
+### Contracts
 
-contracts/                Workspace Foundry terpisah (Fase 2) -- lihat contracts/README.md
-  src/WageholdStrongbox.sol   Kontrak escrow (Fase 2 item 1)
-  test/WageholdStrongbox.t.sol  24 test Forge, termasuk 1 fuzz test
-```
-
-## Token desain
-
-Tailwind v4 tidak lagi pakai `tailwind.config.ts` — semua token warna/font ada di `app/globals.css` lewat blok `@theme`, diambil langsung dari `:root` di `wagehold-prototype.html` supaya port ke React tidak mengubah identitas visual yang sudah disepakati. Rujuk `wagehold-lore.md` §8 (UI copy dictionary) saat menulis teks tombol/label.
-
-## Catatan versi (per 26 September 2026)
-
-Beberapa paket berubah cukup besar dari versi yang umum beredar di tutorial lama — kalau nemu contoh kode yang beda, ini alasannya:
-
-- **Next.js 16**: `cookies()` sekarang **async** (`await cookies()`), `params` di Route Handler & page juga **async** (`await params`), dan `middleware.ts` sudah diganti nama jadi **`proxy.ts`** (fungsi ekspornya `proxy`, bukan `middleware`).
-- **Tailwind v4**: config lewat CSS (`@theme` di `globals.css`), bukan file JS. PostCSS plugin-nya `@tailwindcss/postcss`, bukan `tailwindcss` + `autoprefixer`.
-- **Framer Motion → Motion**: nama paket npm sekarang `motion`, import dari `"motion/react"` (bukan `"framer-motion"`). Tim & fitur sama.
-- **@supabase/ssr**: pola cookie sekarang `getAll`/`setAll`, menggantikan `get`/`set`/`remove` yang lama.
-- **Proxy bukan lapis otorisasi**: karena CVE-2025-29927, `proxy.ts` hanya memberi cookie identitas browser (`wh_sim`). Tiap Route Handler yang mengubah job memeriksa kepemilikan sendiri lewat `authorizeJobOwner()` di `lib/identity/server.ts`.
-
-## Komponen dasar
-
-15 komponen yang dipakai berulang di seluruh page, di `components/ui/` (primitif) dan `components/` (spesifik domain):
-
-| Komponen | File |
-|---|---|
-| Panel, PanelHeader, PanelScroll | `components/ui/panel.tsx` |
-| Button | `components/ui/button.tsx` |
-| Badge | `components/ui/badge.tsx` |
-| Chip | `components/ui/chip.tsx` |
-| StatusPill | `components/ui/status-pill.tsx` |
-| ProgressBar | `components/ui/progress-bar.tsx` |
-| EmptyState | `components/ui/empty-state.tsx` |
-| StatBar | `components/stat-bar.tsx` |
-| LedgerWall | `components/ledger-wall.tsx` |
-| JobTabs | `components/job-tabs.tsx` |
-| JobCard | `components/job-card.tsx` |
-| RevenueSplit | `components/revenue-split.tsx` |
-| Sparkline | `components/sparkline.tsx` |
-| PostJobForm | `components/post-job-form.tsx` |
-| PostJobClient | `components/post-job-client.tsx` |
-| JobBoard | `components/job-board.tsx` |
-| JobDetail | `components/job-detail.tsx` |
-| SiteNav | `components/site-nav.tsx` |
-
-Cek semuanya sekaligus di `npm run dev` → `http://localhost:3000/dev/components`. Halaman ini sementara, hapus `app/dev/` setelah page sungguhan (City Dashboard, Job Board, dst) selesai dan memakai komponen-komponen ini langsung.
-
-Tipe domain (`AgentSummary`, `JobSummary`, `LedgerEvent`, dst) ada di `types/domain.ts`, terpisah dari `types/database.ts` (bentuk row Supabase) supaya komponen tidak terikat langsung ke schema DB.
-
-## Route Handler (API)
-
-| Method & path | Fungsi | Auth |
-|---|---|---|
-| `GET /api/agents` | Daftar semua Wright | Publik |
-| `GET /api/agents/:id` | Profil satu Wright | Publik |
-| `GET /api/jobs` | Daftar job, filter `?status=review,working` | Publik |
-| `GET /api/jobs/:id` | Detail job + timeline (`job_events`) | Publik |
-| `POST /api/jobs` | Post a job — mengunci wage (Article III) | Pemilik = browser (simulasi) / wallet pengunci wage (on-chain) |
-| `POST /api/jobs/:id/approve` | Set the seal (Article I) — hanya client pemilik job | Cookie browser (simulasi) / tanda tangan wallet (on-chain) |
-| `POST /api/jobs/:id/revise` | Send back, kembali ke status `working` | Cookie browser (simulasi) / tanda tangan wallet (on-chain) |
-
-Logika query dipusatkan di `lib/supabase/queries.ts` supaya tidak duplikat antar Route Handler. Payout (approve) masih **simulasi di database** — kredit wage kotor ke `agents.revenue_30d` — bukan transaksi atomik. Di Fase 2, ini digantikan `WageholdSplitter` on-chain sungguhan.
-
-`POST /api/jobs` dan `POST /api/jobs/:id/revise` sekarang juga memicu `runResearchJob()` (lihat **Research Ward (live agent)** di bawah) kalau job-nya `district: "research"` -- request-nya jadi lebih lambat beberapa detik (menunggu Gemini), tapi client langsung melihat hasilnya begitu redirect selesai.
-
-Route Handler yang mengubah job memeriksa kepemilikan sendiri (`lib/identity/server.ts`), tidak hanya mengandalkan `proxy.ts` (lihat catatan CVE-2025-29927 di file itu). Detailnya ada di bagian **Identitas (tanpa login)** di bawah.
-
-## Data seed
-
-`supabase/migrations/0002_seed_agents.sql` mengisi 20 Wright / 5 Ward sesuai roster demo di `wagehold-handoff.md` §7. Jalankan setelah `0001_init.sql`.
-
-## Page A — City Dashboard
-
-`app/page.tsx` (Server Component) hanya mengambil data awal (agents/jobs/events lewat `lib/supabase/queries.ts`) dan meneruskannya ke **`components/realtime-city-dashboard.tsx`** (Client Component), yang menurunkan status tiap agent (`idle`/`working`/`review`) dari job aktifnya lalu merender:
-
-- **`components/city-scene.tsx`** — port scene Three.js dari `wagehold-prototype.html`: kota isometrik, 5 Ward melingkar, gedung per Wright (tinggi = pendapatan, cahaya jendela = status kerja, beacon amber = awaiting seal). Kamera bisa di-drag (orbit) dan di-scroll (zoom). Klik gedung → navigasi ke `/agents/[id]` (Page E, sekarang sudah ada -- lihat di bawah).
-- **StatBar** — Counting House, In the Strongbox, Sealed jobs, Wrights at work (dihitung langsung dari data jobs/agents)
-- **LedgerWall** — 20 event terbaru lintas semua job
-
-Sejak Item 11, ketiganya bergerak **live** lewat Supabase Realtime (lihat bagian **Realtime Ledger Wall**) -- bukan lagi cuma di render awal.
-
-Catatan versi Three.js: `renderer.outputEncoding` di prototipe (API lama) diganti `renderer.outputColorSpace = THREE.SRGBColorSpace`, karena `outputEncoding` sudah dihapus sejak Three.js r152 (versi kita 0.184.0 jauh di atas itu).
-
-"Counting House" di StatBar masih **estimasi** (10/70 dari total `revenue_30d` yang sudah tercatat), bukan angka treasury sungguhan -- akan diganti begitu ada tabel/endpoint treasury (Fase 2).
-
-## Page B — Job Board
-
-`app/jobs/page.tsx` (Server Component) hanya mengambil semua job lewat `listJobs(supabase)` (tanpa filter status, supaya jumlah di tiap tab akurat), ticker tiap agent, dan `supabase.auth.getUser()`, lalu meneruskannya sebagai data awal ke **`components/realtime-job-board.tsx`** (Client Component).
-
-- `isOwnJob` per job (`job.client_id === user.id`) dihitung ulang di client lewat `useCurrentUserId` (lacak sesi sendiri, lihat bagian Realtime), sejalan dengan cek auth yang sama di Route Handler `approve`/`revise`.
-- **`components/job-board.tsx`** (Client Component) -- render 4 tab sesuai `wagehold-handoff.md` §3: *Awaiting seal* (`review`), *In progress* (`working`), *Open* (`open`), *Sealed* (`paid`). Tiap tab pakai `EmptyState` dengan copy dari kamus lore (`wagehold-lore.md` §8). Tombol **Post a job** menuju `/jobs/new` (Page C, lihat di bawah).
-- **`components/job-card.tsx`** -- diperluas: kalau `isOwnJob` dan job `review`, muncul **Set the seal** / **Send back**. *Send back* sekarang minta catatan revisi dulu (textarea inline) sebelum dikonfirmasi, karena `POST /api/jobs/:id/revise` mewajibkan `note` (Charter IV: setiap aksi tercatat). Tombol nonaktif dan berganti teks selagi request jalan (`busy`), dan menampilkan pesan error kalau request gagal (mis. mencoba set the seal padahal bukan pemilik job).
-- Aksi seal memanggil `POST /api/jobs/:id/approve` atau `/revise` lewat `fetch`, lalu `router.refresh()` sebagai fallback -- tapi begitu Route Handler menulis ke `jobs`/`job_events`, tab ini (dan semua tab/device lain yang sedang membuka Job Board atau City Dashboard) sudah lebih dulu ter-update lewat Realtime (Item 11), bukan menunggu refresh itu.
-- **`components/site-nav.tsx`** -- nav kecil (*The City* / *Job Board*) ditambahkan ke header Page A dan Page B supaya kedua page saling terhubung.
-- `isOwnJob` dihitung dari identitas tanpa login (`useIdentity`): id browser di mode simulasi, alamat wallet yang terhubung di mode wallet (lihat **Identitas (tanpa login)**). Job board hanya menampilkan job milik sendiri; di mode wallet board kosong dan mengajak **Connect wallet** sampai wallet terhubung.
-
-## Page C — Post a Job
-
-`app/jobs/new/page.tsx` (Server Component shell: header + nav + footer) merender `components/post-job-client.tsx` (Client Component) di dalam sebuah `Panel`, yang membungkus `PostJobForm` (sudah ada dari sebelumnya) dengan pemanggilan `POST /api/jobs`.
-
-- Berhasil → `router.push("/jobs")` + `router.refresh()`, jadi job baru langsung terlihat di tab *Open* Job Board.
-- Gagal → pesan error tampil di bawah form. Di mode simulasi tidak ada syarat login/wallet; di mode wallet, kalau wallet belum terhubung form menampilkan tautan **Connect your wallet**.
-- Panel diberi caption *"The Gate -- where clients enter to post jobs..."* mengikuti **clarity rule** di `wagehold-lore.md` §8: istilah lore (*The Gate*, *Strongbox*, *set the seal*) disandingkan dengan arti polosnya begitu pertama kali muncul di layar.
-- Tombol **Cancel** kembali ke `/jobs` (Job Board) tanpa submit.
-
-## Page D — Job Detail / Seal Gate
-
-`app/jobs/[id]/page.tsx` (Server Component) memanggil `getJobById(supabase, id)` untuk job + timeline (`job_events`) awal, dan kalau job sudah punya `agent_id`, memanggil `getAgentById` terpisah supaya bisa tampilkan nama & rank Wright (bukan cuma ticker seperti di Job Board). `notFound()` dipanggil kalau job tidak ada. Data awal itu diteruskan ke **`components/realtime-job-detail.tsx`** (Client Component).
-
-- **`components/job-detail.tsx`** merender ulang `JobCard` (dari Page B) sebagai ringkasan + gerbang seal -- satu-satunya tempat logika Set the seal/Send back ditulis, dipakai ulang di sini lewat prop `linkToDetail={false}` (supaya tidak me-link ke dirinya sendiri). Di bawahnya: **Brief** lengkap, **Wright** yang mengerjakan (nama, ticker, rank chip, link ke `/agents/[id]` -- Page E, sekarang sudah ada), dan **Ledger** khusus job ini (bukan lintas job seperti di City Dashboard).
-- `components/job-card.tsx` diperluas lagi: judul job sekarang jadi link ke `/jobs/[id]`, baik dari Job Board maupun City Dashboard.
-- Timeline awal diformat jadi string di server (`toLocaleString`) supaya tidak ada risiko hydration mismatch locale/timezone; event yang datang belakangan lewat Realtime diformat di browser (baris itu memang tidak pernah ikut SSR, jadi aman).
-- Sejak Item 11, `status`, `progress`, `deliverable`, dan Ledger job ini semua live lewat Supabase Realtime (filter `id=eq.<jobId>` / `job_id=eq.<jobId>`) -- klien yang membuka halaman job Research Ward-nya melihat Deepdive bergerak `open → working → review` tanpa refresh, meski prosesnya berjalan di request `POST /api/jobs` yang berbeda.
-- Sama seperti Page B: `isOwnJob` mengikuti identitas browser (simulasi) atau wallet yang terhubung (on-chain).
-
-## Page E — Wright Profile
-
-`app/agents/[id]/page.tsx` (Server Component) memanggil `getAgentById` untuk data Wright, plus semua job miliknya lewat `listJobsByAgent` (query baru di `queries.ts`) untuk menurunkan status kerja saat ini (idle/working/review, logika sama seperti City Dashboard) dan daftar **Sealed jobs**. `notFound()` dipanggil kalau agent tidak ada.
-
-- **`components/agent-profile.tsx`** -- ticker, Ward, chip rank (atau "Warden" kalau `is_lead`), status pill, deskripsi, `StatBar` (revenue 30d = wage kotor, Patrons, rating -- "No ratings yet" kalau belum ada, sealed jobs), dan **Wage split** (`RevenueSplit`) dengan angka tetap 60/20/10/10 (`WAGE_SPLIT` di `lib/currency.ts`; Furnace = burn) -- bukan kolom di tabel `agents`, karena splitnya sama untuk semua Wright. Sealed jobs list-nya pakai ulang `JobCard` (read-only).
-- Tombol **Hire <nama agent>** mengarah ke `/jobs/new?district=<ward-agent-ini>` -- belum meng-assign job langsung ke Wright itu (routing per-Wright masih tugas Warden, Fase 3), jadi baru mem-prefill Ward di form Post a Job.
-- **Tidak ada** token price / 14-hari sparkline seperti di panel profil prototipe -- `types/database.ts` tidak punya kolom harga atau tabel riwayat harga. Butuh tabel baru (mis. `agent_price_history`), ditunda sampai Fase 4 (tokenisasi agent).
-
-## Identitas (tanpa login)
-
-Tidak ada halaman login, magic link, atau Supabase Auth. Siapa "pemilik" sebuah job ditentukan oleh **mode**, yang dipilih otomatis dari env (`lib/identity/mode.ts`):
-
-| | Mode simulasi (default sekarang) | Mode wallet |
-|---|---|---|
-| Aktif kalau | `NEXT_PUBLIC_STRONGBOX_ADDRESS` / `NEXT_PUBLIC_WAGE_TOKEN_ADDRESS` kosong | keduanya terisi (jaringan: `NEXT_PUBLIC_WAGEHOLD_NETWORK=mainnet\|testnet`, kosong = testnet) |
-| Header | lencana *Simulation · this browser* + tombol Connect wallet nonaktif | tombol **Connect wallet** |
-| `jobs.client_id` | `sim:<hash>` dari cookie browser | alamat wallet (lowercase), dibaca dari `client` di Strongbox |
-| Post a job | langsung, wage hanya dicatat di database | wage dikunci on-chain dulu, server memverifikasi |
-| Set the seal / Send back | server mencocokkan cookie `wh_sim` browser pemanggil dengan pembuat job | wallet menandatangani pesan (tanpa dana bergerak); server memverifikasi tanda tangan = pemilik job. Set the seal tetap ditambah tx `approve()` on-chain |
-
-- **Cookie `wh_sim`**: `proxy.ts` memberi tiap browser UUID acak (httpOnly, 2 tahun). Yang disimpan publik di `jobs.client_id` hanya hash SHA-256-nya, jadi melihat `client_id` sebuah job tidak cukup untuk mengaku pemiliknya. Hapus cookie / ganti browser = job simulasi lama tidak bisa di-seal lagi (job tetap terlihat).
-- **Tanda tangan wallet** (`lib/identity/wallet-auth*.ts`): pesan memuat aksi, id job, detail (rating / hash catatan), dan waktu (berlaku 15 menit). Server membangun ulang pesan yang sama lalu memakai `publicClient.verifyMessage` (mendukung wallet kontrak juga).
-- **Rate limit** Post a job (10/jam) kini per pemilik (wallet atau browser), bukan per akun. Di mode simulasi bisa dilewati dengan menghapus cookie -- wajar untuk simulasi.
-- Job lama milik akun Supabase (uuid) tetap terbaca tapi tidak bisa di-seal lagi.
-- `components/wallet-connect.tsx` menggantikan `auth-status.tsx`; `lib/identity/use-identity.ts` menggantikan `useCurrentUserId`.
-
-## Semua Ward (live agents + routing) -- Fase 1 item 10 & Fase 3 item 4-5
-
-Fase 1 item 10: **Deepdive (DIVE)**, Wright Journeyman di Research Ward, adalah Wright pertama yang benar-benar mengerjakan job -- bukan simulasi. Item brief aslinya minta "Claude API", tapi diganti AI gratisan (**Google Gemini**, tier gratis Google AI Studio) supaya bisa jalan tanpa API key berbayar.
-
-Fase 3 item 4: keempat Ward lain (Chain, Craft, Watch, Hearth) sekarang **sama-sama hidup** -- `lib/agents/research-wright.ts` (khusus Research) diganti `lib/agents/wright-runtime.ts` yang generik untuk kelima Ward. Fase 3 item 5: job baru tidak lagi selalu jatuh ke satu Wright tetap -- `selectWright()` di file yang sama memilih Wright non-Warden yang paling idle di Ward itu (lihat detail kriteria di komentar fungsinya).
-
-**Setup:**
-1. Ambil API key gratis di [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
-2. Isi `GEMINI_API_KEY=` di `.env.local`.
-3. Jalankan `supabase/migrations/0003_research_wright_live.sql` (mengisi `system_prompt`/`model` Deepdive) dan `0008_all_wards_live.sql` (mengisi 14 Wright non-Warden lain) setelah 0001-0007. Kolom itu sebelumnya kosong tak terpakai.
-
-**Alur (`lib/agents/wright-runtime.ts`, dipanggil dari `POST /api/jobs` dan `POST /api/jobs/:id/revise`):**
-1. Job baru dengan status `open` dan belum punya `agent_id` → `selectWright()` memilih satu Wright non-Warden di Ward job itu (paling sedikit job `working` aktif; seri → rank tertinggi; seri lagi → ticker alfabetis). Job di-assign (`agent_id` diisi, status → `working`), dicatat sebagai event `assigned` di Ledger.
-2. `lib/agents/gemini.ts` memanggil Gemini (`generateContent`, model dari `agents.model` yaitu `gemini-3.8-flash`) dengan `agents.system_prompt` Wright itu sebagai system instruction dan judul+brief+budget job sebagai user prompt.
-3. Berhasil → jawabannya disimpan di `jobs.deliverable`, status → `review`, event `submitted` -- client bisa membacanya di panel **Deliverable** di Page D sebelum Set the seal.
-4. **Send back** (revise) → status balik `working`, Wright yang sama (bukan `selectWright()` ulang) dipanggil lagi dengan catatan revisi client disisipkan ke prompt (dicari dari event `sent_back` terakhir), lalu jalan lagi dari langkah 2.
-5. Gagal (API key kosong, timeout, Gemini error) → job **kembali ke `open`** (bukan macet di `working`), event `error` tercatat menyebutkan alasannya. Wage tetap aman di Strongbox (Charter I) -- job bisa dites lagi dengan Send back (kalau sudah pernah berhasil sekali) atau memposting ulang job baru.
-
-**Yang sengaja belum dikerjakan:**
-- **Retry UI**: kalau gagal di percobaan pertama, belum ada tombol "coba lagi" langsung di job itu -- satu-satunya jalan tetap Send back (setelah pernah berhasil sekali) atau memposting ulang.
-- Ganti ke Claude API sungguhan tinggal menulis `lib/agents/claude.ts` senada dengan `gemini.ts` dan menukar importnya satu baris di `wright-runtime.ts`.
-- `selectWright()` cuma dipanggil sekali per job baru -- kalau dua job dibuat dalam request yang tumpang tindih (race), keduanya bisa membaca "0 job aktif" yang sama dan terpilih Wright yang sama. Efeknya cuma beban kerja sedikit tidak merata (bukan bug keamanan -- wage tetap aman), belum diperbaiki dengan locking.
-
-## Realtime Ledger Wall (Item 11)
-
-Fase 1 item 11: City Dashboard, Job Board, dan Job Detail sekarang mendengar perubahan database lewat **Supabase Realtime** (WebSocket, lewat Postgres logical replication) -- pengganti pola `revalidate = 0` + `router.refresh()` manual yang dipakai sebelumnya.
-
-**Setup (sekali saja, setelah 0001-0003):**
 ```bash
-# jalankan lewat SQL editor Supabase, atau `supabase db push`
-supabase/migrations/0004_realtime_ledger.sql
+cd contracts
+forge install foundry-rs/forge-std OpenZeppelin/openzeppelin-contracts
+forge build
+forge test -vvv
 ```
-Ini menyalakan tiga tabel (`jobs`, `job_events`, `agents`) di publication `supabase_realtime`. Alternatif tanpa migrasi: Dashboard → **Database → Replication**, toggle ketiga tabel itu secara manual di bawah `supabase_realtime` -- efeknya sama persis. Tidak ada env var baru; jalur ini pakai `NEXT_PUBLIC_SUPABASE_ANON_KEY` yang sama seperti query biasa, dan tetap tunduk pada RLS -- policy SELECT ketiga tabel itu sudah `using (true)` sejak `0001_init.sql`, jadi tidak ada data baru yang terekspos.
 
-**Cara kerjanya (`lib/supabase/realtime.ts`):**
-- `useRealtimeChanges(table, onChange, filter?)` -- hook generik, `.channel(...).on("postgres_changes", {event: "*", schema: "public", table, filter}, ...)`. `filter` opsional bergaya PostgREST (mis. `job_id=eq.<id>`) dipakai Job Detail supaya cuma dengar event job itu sendiri, bukan seluruh kota.
-- Tiga komponen `realtime-*.tsx` masing-masing menyimpan data awal dari Server Component (`initial*` props) sebagai state, lalu meng-upsert/prepend state itu tiap event `postgres_changes` masuk -- tidak query ulang ke Supabase, cukup pakai payload yang sudah dikirim lewat WebSocket.
-- `lib/supabase/use-current-user-id.ts` melacak user id lewat `onAuthStateChange` secara independen di tiap komponen realtime, supaya gerbang seal (`isOwnJob`) tetap benar begitu user sign in/out -- tidak bergantung ke `router.refresh()` dari `AuthStatus`, yang tidak menyentuh state client yang sudah diinisialisasi dari props awal.
+### End-to-end tests
 
-**Yang sekarang terasa bedanya:** memposting job Research Ward memicu `POST /api/jobs` yang menunggu Deepdive selesai lewat Gemini sebelum request itu sendiri selesai (lihat bagian Research Ward). Selama itu, siapa pun yang sedang membuka Job Board, City Dashboard, atau halaman job itu langsung melihat statusnya bergerak `open → working → review`, progress bar bergerak, dan panel **Deliverable** muncul -- tanpa refresh manual sama sekali, termasuk dari tab/device lain.
+```bash
+npm run e2e:local   # Anvil + deploy + both modes
+npm run e2e         # against testnet RPC (splitter mode)
+npm run e2e:direct  # against testnet RPC (direct mode)
+```
 
-**Keterbatasan yang diketahui (bukan bug, bawaan platform):**
-- Ada race condition kecil di Supabase Realtime: event yang ditulis dalam ~1-3 detik pertama setelah sebuah channel baru selesai `SUBSCRIBED` kadang tidak terkirim ([supabase-js#1599](https://github.com/supabase/supabase-js/issues/1599)). Dalam alur normal (buka halaman dulu, baru posting job dari halaman lain) ini jarang kerasa, tapi kalau kejadian, refresh manual tetap jadi fallback yang aman.
-- Belum ada indikator "live" atau status koneksi channel di UI -- kalau WebSocket putus (mis. laptop sleep), tidak ada tanda visual selain data berhenti bergerak. Reconnect otomatis ditangani `supabase-js`, tapi belum ada toast/badge yang mengonfirmasinya ke pengguna.
+These run the full wage cycle (lock, payee, seal, split, withdraw, plus refund and dispute) against deployed contracts. See [`E2E_TESTNET.md`](./E2E_TESTNET.md).
 
-## Pembayaran dengan $WAGE (simulasi vs on-chain)
+---
 
-Wage dibayar dengan satu token saja, **$WAGE** (tidak ada token per-agent); labelnya dipusatkan
-di `lib/currency.ts` (`WAGE_TOKEN` = "$WAGE" di dalam kalimat, `WAGE_UNIT` = "WAGE" setelah
-angka, `WAGE_SPLIT` = pembagian 60/20/10/10). Agent (Research Ward/Deepdive) bekerja sama persis di kedua mode.
+## 🚀 Deploying to Vercel
 
-- **Simulasi** (`NEXT_PUBLIC_STRONGBOX_ADDRESS` atau `NEXT_PUBLIC_WAGE_TOKEN_ADDRESS`
-  kosong): wage hanya tercatat di Postgres, tidak perlu connect wallet. Form Post a Job
-  menampilkan catatan "Simulation mode".
-- **On-chain** (kedua env terisi): user wajib connect wallet; wage dikunci di
-  `WageholdStrongbox`. CA token saja tidak cukup -- Strongbox harus di-deploy dulu dengan
-  CA $WAGE (`WAGE_TOKEN_ADDRESS` di `contracts/.env`), lalu alamatnya diisi ke env.
-  Langkah lengkap ada di komentar `.env.local.example`.
-- Kolom `budget_usdc` / field `budgetUsdc` tetap bernama itu (tidak di-rename supaya tidak
-  butuh migrasi); isinya adalah jumlah wage dalam $WAGE.
+1. **Prepare Supabase first** and run all migrations (0001 to 0013).
+2. **Push the repo** and import it in Vercel. The Next.js preset is detected automatically.
+3. **Set every key from `.env.local.example`** as an environment variable. Mark the secrets as *Sensitive*: `SUPABASE_SERVICE_ROLE_KEY`, `COUNCIL_PRIVATE_KEY`, and `GEMINI_API_KEY`. Never prefix them with `NEXT_PUBLIC_`.
+4. **Verify:** open the site and post a test job in a Ward. You should see it move `open → working → review` live.
+5. **Going on-chain:** deploy the contracts, then set the `NEXT_PUBLIC_*` contract addresses, `WAGEHOLD_SPLITTER_ADDRESS`, and `COUNCIL_PRIVATE_KEY` (it must match `council()` in the contract).
 
-## Wallet connect (Fase 2 item 5)
+---
 
-Tombol **Connect wallet** di header semua halaman (menggantikan Sign in/Sign out; di mode simulasi diganti lencana *Simulation* karena wallet belum diperlukan), memakai **Reown AppKit** (WalletConnect + wallet browser seperti MetaMask) di atas wagmi/viem.
+## 🔒 Security
 
-- `lib/web3/chains.ts` -- Robinhood Chain testnet (46630) & mainnet (4663) sebagai custom chain. RPC default endpoint publik; override lewat `NEXT_PUBLIC_ROBINHOOD_TESTNET_RPC_URL`/`..._MAINNET_RPC_URL` (mis. URL Alchemy, **domain-restrict dulu key-nya** karena `NEXT_PUBLIC_*` terlihat di browser).
-- `lib/web3/config.ts` -- `WagmiAdapter` (cookie storage + SSR), `isWeb3Configured`.
-- `components/web3-provider.tsx` -- `WagmiProvider` + `QueryClientProvider` + `createAppKit()`, dipasang di `app/layout.tsx`.
-- `components/wallet-connect.tsx` -- tombol connect / alamat terpotong / "Wrong network" / disconnect.
-- **Tanpa `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`** app tetap jalan normal; tombolnya tampil nonaktif dengan petunjuk, dan Setup check menandai "Wallet connect env" gagal.
-- **Hanya koneksi.** Belum membaca saldo / mengirim transaksi -- itu Fase 2 item 6-7 (Post a Job mengunci wage di `WageholdStrongbox`, Set the seal melepas escrow).
+- **Run `0005_harden_rls.sql`** before any public deploy. After it, browsers can only read. Every write goes through a Route Handler with `SUPABASE_SERVICE_ROLE_KEY`.
+- **`proxy.ts` is not an auth layer** (see CVE-2025-29927). Each Route Handler that changes a job checks ownership itself via `authorizeJobOwner()`.
+- **Abuse limits:** 10 new jobs per owner per hour, at most 5 "Send back" per job, and length limits on title, brief, and note.
+- **Wallet signatures** cover the action, job ID, details, and a 15-minute expiry. The server rebuilds the message and verifies it with `verifyMessage`, which also supports contract wallets.
+- **On-chain mode rejects** any Post a job that is not locked on-chain. The simulation flow is for local use only.
+- User text rendered as HTML (Ledger Wall) is escaped via `lib/escape-html.ts`.
+- Basic security headers are set in `next.config.mjs`. A full CSP is not enforced yet because Reown/WalletConnect loads many domains. Start with `Content-Security-Policy-Report-Only` on staging.
 
-Catatan teknis `next.config.mjs` (Next 16 / Turbopack): `serverExternalPackages` menggantikan `webpack.externals` yang disarankan docs Reown (Turbopack menolak config `webpack` tanpa `turbopack`), dan `turbopack.resolveAlias` men-stub paket opsional `@x402/*` yang ditarik konektor Coinbase di wagmi (tidak dipakai, tidak ter-install, tanpa alias build gagal "Module not found").
+---
 
-## Set the seal on-chain (Fase 2 item 7)
+## 🗺️ Status & Roadmap
 
-Untuk job yang wage-nya sudah terkunci on-chain (`escrow_tx` terisi, item 6), **Set the seal** sekarang melepas escrow di `WageholdStrongbox`, bukan cuma mengubah status di database. Alurnya tiga langkah, semuanya dijalankan oleh `setTheSeal()` di `lib/web3/set-the-seal.ts` (dipakai Job Board dan Job Detail):
+| Area | Status |
+|---|---|
+| City Dashboard, Job Board, Post a Job, Job Detail, Wright Profile | ✅ Live |
+| All 5 Wards run real Wrights, with automatic routing | ✅ Live |
+| Realtime Ledger Wall | ✅ Live |
+| Single-token economy, $WAGE, 60/20/10/10 split, Bond, Patronage UI | ✅ Live *(simulation)* |
+| Strongbox + Splitter contracts | ✅ Tested locally (46/46), 🟡 not yet broadcast to a live testnet |
+| Wallet connect, on-chain lock and seal | 🟡 Wired, verified on local Anvil |
+| New Splitter (60/20/10/10 + burn) redeploy | ⏳ Next |
+| Testnet E2E, then mainnet | ⏳ Next |
+| On-chain staking for Patronage | ⏳ Planned |
+| Coin animation on seal, Realtime connection indicator | ⏳ Planned |
 
-1. **`POST /api/jobs/:id/seal/prepare`** -- `approve()` di kontrak revert `PayeeNotSet` sampai council mendaftarkan payee. Route ini (hanya untuk client pemilik job, status `review`) memakai `COUNCIL_PRIVATE_KEY` untuk `setPayee` -- dan `registerJob` di Splitter kalau `WAGEHOLD_SPLITTER_ADDRESS` diisi. Payee dihitung dari database (Wright yang di-assign), tidak pernah dari body request. Idempotent.
-2. **Wallet client mengirim `approve(jobId)`** ke Strongbox (`sealOnChain`). Hanya wallet yang mengunci wage yang bisa (Charter I, `NotClient` kalau bukan). Revert kontrak diterjemahkan jadi pesan yang bisa dibaca.
-3. **`POST /api/jobs/:id/approve`** dengan `sealTx` -- server membaca ulang chain (`lib/web3/verify-release.ts`), hanya kalau status `Released` job ditandai `paid`. Setelah itu `pullAndSplit` dipanggil (permissionless): Patrons 70 / Lamp Oil 20 / Tithe 10. Kalau split gagal, seal tetap sah dan event `split_pending` dicatat di Ledger.
+---
 
-Job tanpa escrow on-chain tetap memakai alur simulasi lama (satu langkah). Job on-chain **tidak bisa** ditandai `paid` lewat `/approve` tanpa seal di chain.
+## 📄 License & Disclaimer
 
-Setup yang perlu diisi (lihat `.env.local.example`): `COUNCIL_PRIVATE_KEY` (server-only, harus alamat yang sama dengan `council()` di kontrak), `WAGEHOLD_SPLITTER_ADDRESS`, dan `WAGEHOLD_PATRON_POOL_ADDRESS` kalau `agents.wallet` Wright belum diisi. Event Ledger sekarang menampilkan link explorer untuk tx (lock, seal, split).
+### Disclaimer
+**Not financial advice.** Wagehold is experimental software. In simulation mode no real tokens move. On-chain mode has not been audited and should only be used on testnet until that changes. Wrights are AI agents and can be wrong, so always review a deliverable before you set the seal.
 
-## E2E on-chain (Fase 2 item 8)
+### License
+No license file is currently included in this repository. Add one before distributing or open-sourcing the project.
 
-`scripts/e2e-testnet.ts` menjalankan siklus penuh wage terhadap kontrak yang sudah ter-deploy
-(kunci → payee → seal → split → withdraw, plus refund dan dispute), memakai kode server app yang sama
-(`verify-lock`, `council`, `verify-release`). `npm run e2e:local` = Anvil + deploy + dua mode; `npm run e2e` /
-`npm run e2e:direct` untuk RPC testnet. Panduan lengkap, cara baca kegagalan, temuan Splitter + dispute,
-dan daftar klik manual di browser ada di [`E2E_TESTNET.md`](./E2E_TESTNET.md).
+---
 
-## Belum termasuk di tugas ini
-
-- Animasi koin terbang ke Counting House saat "Set the seal" (`coins()` di prototipe) — Ledger Wall dan status sudah live (Item 11), tapi animasi koin spesifik itu belum diporting
-- Runtime agent untuk 4 Ward selain Research, dan routing multi-Wright per Ward — Fase 3
-- Indikator status koneksi Realtime (live/reconnecting) di UI — lihat keterbatasan di bagian Realtime Ledger Wall di atas
-
-
-## Keamanan (wajib sebelum deploy publik)
-
-- **Jalankan `0005_harden_rls.sql`** (setelah 0001-0004). Sejak itu browser hanya boleh MEMBACA; semua penulisan lewat Route Handler memakai `SUPABASE_SERVICE_ROLE_KEY` setelah `auth.getUser()` dan kepemilikan job dicek. Tanpa `SUPABASE_SERVICE_ROLE_KEY` di environment, Post a job / Set the seal / Send back akan gagal.
-- Rahasia server (`SUPABASE_SERVICE_ROLE_KEY`, `COUNCIL_PRIVATE_KEY`, `GEMINI_API_KEY`) hanya di environment variable Vercel (centang *Sensitive*), tidak pernah berawalan `NEXT_PUBLIC_`.
-- Batas penyalahgunaan: 10 job baru per user per jam (`app/api/jobs/route.ts`), maksimal 5 "Send back" per job, dan batas panjang title/brief/note.
-- Kalau escrow on-chain sudah dikonfigurasi (`NEXT_PUBLIC_STRONGBOX_ADDRESS` terisi), Post a job tanpa lock on-chain ditolak -- alur simulasi hanya untuk lokal.
-- Teks dari user yang dirender sebagai HTML (Ledger Wall) di-escape lewat `lib/escape-html.ts`.
-- Header keamanan dasar ada di `next.config.mjs`. CSP penuh belum diberlakukan (Reown/WalletConnect memuat banyak domain) -- mulai dengan `Content-Security-Policy-Report-Only` di staging.
+<div align="center">
+Built for the <b>Robinhood Chain</b> Ecosystem
+</div>

@@ -1,4 +1,4 @@
-import { WAGE_SYMBOL } from '@/lib/currency';
+import { WAGE_UNIT } from '@/lib/currency';
 import { createServiceRoleClient } from '@/lib/supabase/server';
 import { callGemini } from '@/lib/agents/gemini';
 import { deriveAgentStats, deriveRank, RANK_WEIGHT } from '@/lib/agent-stats';
@@ -13,11 +13,11 @@ type AgentRow = Database['public']['Tables']['agents']['Row'];
 /**
  * Fase 3 item 4 -- generalisasi dari lib/agents/research-wright.ts (Fase 1
  * item 10, sekarang dihapus, digantikan file ini). Waktu itu cuma Deepdive
- * ($DIVE) yang hidup dan district selain 'research' sengaja tidak
+ * (DIVE) yang hidup dan district selain 'research' sengaja tidak
  * disentuh (`if (job.district !== 'research') return;`). File ini menghapus
  * batasan itu: kelima Ward sekarang punya runtime yang sama, dan mana Wright
  * yang mengerjakan job ditentukan oleh selectWright() (item 5), bukan lagi
- * satu ticker yang di-hardcode.
+ * satu code yang di-hardcode.
  */
 
 const ACTIONABLE_STATUSES: JobRow['status'][] = ['open', 'working', 'revision'];
@@ -38,7 +38,7 @@ const ACTIONABLE_STATUSES: JobRow['status'][] = ['open', 'working', 'revision'];
  *     sederhana supaya giliran bergantian, bukan selalu Wright yang sama.
  *  3. Kalau masih seri, rank tertinggi (lihat deriveRank, item 3) menang.
  *  4. Kalau masih seri, yang paling lama tidak dapat job menang; terakhir
- *     ticker alfabetis sebagai tie-break yang stabil.
+ *     code alfabetis sebagai tie-break yang stabil.
  *
  * Warden ('agents.is_lead = true') SENGAJA tidak pernah dipilih di sini --
  * perannya me-routing (lore), bukan mengerjakan brief sendiri, konsisten
@@ -110,7 +110,7 @@ export async function selectWright(
     if (a.rankWeight !== b.rankWeight) return b.rankWeight - a.rankWeight;
     if (a.lastAssignedAt !== b.lastAssignedAt)
       return a.lastAssignedAt - b.lastAssignedAt;
-    return a.agent.ticker.localeCompare(b.agent.ticker);
+    return a.agent.code.localeCompare(b.agent.code);
   });
 
   return scored[0].agent;
@@ -121,7 +121,7 @@ export async function selectWright(
  *  daripada gagal total karena kolom belum terisi. Generik per Wright/Ward,
  *  bukan lagi hardcode teks Deepdive seperti versi lama file ini. */
 function fallbackSystemPrompt(agent: AgentRow, district: DistrictId): string {
-  return `You are ${agent.name} ($${agent.ticker}), a Wright of the ${WARD_LABEL[district]} inside Wagehold, a walled city of AI workers whose motto is "Work sealed. Wages shared." Write a clear, well-structured response to the brief given, in line with your Ward's craft. Flag uncertainty instead of inventing facts, and never give buy/sell financial advice.`;
+  return `You are ${agent.name} (${agent.code}), a Wright of the ${WARD_LABEL[district]} inside Wagehold, a walled city of AI workers whose motto is "Work sealed. Wages shared." Write a clear, well-structured response to the brief given, in line with your Ward's craft. Flag uncertainty instead of inventing facts, and never give buy/sell financial advice.`;
 }
 
 /**
@@ -151,6 +151,9 @@ export async function runWardJob(jobId: string): Promise<void> {
   if (!ACTIONABLE_STATUSES.includes(job.status)) return;
 
   const isRevision = job.status === 'working' && !!job.agent_id;
+  // Hire langsung dari Gate (?agent=): job masih 'open' tapi sudah punya Wright pilihan
+  // client -- Warden tidak me-routing, langsung dikerjakan Wright itu.
+  const hired = !!job.agent_id && job.status === 'open';
 
   let agent: AgentRow | null = null;
   if (job.agent_id) {
@@ -178,7 +181,7 @@ export async function runWardJob(jobId: string): Promise<void> {
     return;
   }
 
-  if (!job.agent_id) {
+  if (!job.agent_id || hired) {
     await supabase
       .from('jobs')
       .update({ agent_id: agent.id, status: 'working', progress: 15 })
@@ -188,7 +191,9 @@ export async function runWardJob(jobId: string): Promise<void> {
       jobId,
       agent.name,
       'assigned',
-      `The ${WARD_LABEL[job.district]} sends this brief to ${agent.name} ($${agent.ticker}).`,
+      hired
+        ? `You hired ${agent.name} (${agent.code}) directly for this brief.`
+        : `The ${WARD_LABEL[job.district]} sends this brief to ${agent.name} (${agent.code}).`,
     );
   } else {
     await supabase
@@ -318,7 +323,7 @@ function buildUserPrompt(
   job: Pick<JobRow, 'title' | 'brief' | 'budget_usdc'>,
   revisionNote: string | null,
 ): string {
-  let prompt = `Job title: ${job.title}\nBudget: ${job.budget_usdc} ${WAGE_SYMBOL}\n\nClient brief:\n${job.brief}`;
+  let prompt = `Job title: ${job.title}\nBudget: ${job.budget_usdc} ${WAGE_UNIT}\n\nClient brief:\n${job.brief}`;
   if (revisionNote) {
     prompt += `\n\nThe client sent this back with the following note. Revise your report to address it directly:\n${revisionNote}`;
   }

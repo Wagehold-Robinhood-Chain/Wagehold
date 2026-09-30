@@ -70,7 +70,7 @@ lib/
     use-current-user-id.ts  Hook lacak user id lewat onAuthStateChange (dipakai komponen realtime)
   agents/
     gemini.ts           Klien REST tipis ke Gemini API (tier gratis)
-    research-wright.ts  Runtime Deepdive ($DIVE) -- assign, panggil Gemini, tulis deliverable + Ledger
+    research-wright.ts  Runtime Deepdive (DIVE) -- assign, panggil Gemini, tulis deliverable + Ledger
 supabase/
   migrations/
     0001_init.sql      Schema awal: agents, jobs, job_events + RLS
@@ -144,7 +144,7 @@ Tipe domain (`AgentSummary`, `JobSummary`, `LedgerEvent`, dst) ada di `types/dom
 | `POST /api/jobs/:id/approve` | Set the seal (Article I) — hanya client pemilik job | Cookie browser (simulasi) / tanda tangan wallet (on-chain) |
 | `POST /api/jobs/:id/revise` | Send back, kembali ke status `working` | Cookie browser (simulasi) / tanda tangan wallet (on-chain) |
 
-Logika query dipusatkan di `lib/supabase/queries.ts` supaya tidak duplikat antar Route Handler. Payout (approve) masih **simulasi di database** — kredit 70% ke `agents.revenue_30d` — bukan transaksi atomik. Di Fase 2, ini digantikan `WageholdSplitter` on-chain sungguhan.
+Logika query dipusatkan di `lib/supabase/queries.ts` supaya tidak duplikat antar Route Handler. Payout (approve) masih **simulasi di database** — kredit wage kotor ke `agents.revenue_30d` — bukan transaksi atomik. Di Fase 2, ini digantikan `WageholdSplitter` on-chain sungguhan.
 
 `POST /api/jobs` dan `POST /api/jobs/:id/revise` sekarang juga memicu `runResearchJob()` (lihat **Research Ward (live agent)** di bawah) kalau job-nya `district: "research"` -- request-nya jadi lebih lambat beberapa detik (menunggu Gemini), tapi client langsung melihat hasilnya begitu redirect selesai.
 
@@ -202,8 +202,8 @@ Catatan versi Three.js: `renderer.outputEncoding` di prototipe (API lama) digant
 
 `app/agents/[id]/page.tsx` (Server Component) memanggil `getAgentById` untuk data Wright, plus semua job miliknya lewat `listJobsByAgent` (query baru di `queries.ts`) untuk menurunkan status kerja saat ini (idle/working/review, logika sama seperti City Dashboard) dan daftar **Sealed jobs**. `notFound()` dipanggil kalau agent tidak ada.
 
-- **`components/agent-profile.tsx`** -- ticker, Ward, chip rank (atau "Warden" kalau `is_lead`), status pill, deskripsi, `StatBar` (revenue 30d, Patrons, rating, sealed jobs), dan **Wage split** (`RevenueSplit`) dengan angka tetap 70/20/10 dari Charter -- bukan kolom di tabel `agents`, karena splitnya sama untuk semua Wright. Sealed jobs list-nya pakai ulang `JobCard` (read-only).
-- Tombol **Hire $TICKER** mengarah ke `/jobs/new?district=<ward-agent-ini>` -- belum meng-assign job langsung ke Wright itu (routing per-Wright masih tugas Warden, Fase 3), jadi baru mem-prefill Ward di form Post a Job.
+- **`components/agent-profile.tsx`** -- ticker, Ward, chip rank (atau "Warden" kalau `is_lead`), status pill, deskripsi, `StatBar` (revenue 30d = wage kotor, Patrons, rating -- "No ratings yet" kalau belum ada, sealed jobs), dan **Wage split** (`RevenueSplit`) dengan angka tetap 60/20/10/10 (`WAGE_SPLIT` di `lib/currency.ts`; Furnace = burn) -- bukan kolom di tabel `agents`, karena splitnya sama untuk semua Wright. Sealed jobs list-nya pakai ulang `JobCard` (read-only).
+- Tombol **Hire <nama agent>** mengarah ke `/jobs/new?district=<ward-agent-ini>` -- belum meng-assign job langsung ke Wright itu (routing per-Wright masih tugas Warden, Fase 3), jadi baru mem-prefill Ward di form Post a Job.
 - **Tidak ada** token price / 14-hari sparkline seperti di panel profil prototipe -- `types/database.ts` tidak punya kolom harga atau tabel riwayat harga. Butuh tabel baru (mis. `agent_price_history`), ditunda sampai Fase 4 (tokenisasi agent).
 
 ## Identitas (tanpa login)
@@ -226,7 +226,7 @@ Tidak ada halaman login, magic link, atau Supabase Auth. Siapa "pemilik" sebuah 
 
 ## Semua Ward (live agents + routing) -- Fase 1 item 10 & Fase 3 item 4-5
 
-Fase 1 item 10: **Deepdive ($DIVE)**, Wright Journeyman di Research Ward, adalah Wright pertama yang benar-benar mengerjakan job -- bukan simulasi. Item brief aslinya minta "Claude API", tapi diganti AI gratisan (**Google Gemini**, tier gratis Google AI Studio) supaya bisa jalan tanpa API key berbayar.
+Fase 1 item 10: **Deepdive (DIVE)**, Wright Journeyman di Research Ward, adalah Wright pertama yang benar-benar mengerjakan job -- bukan simulasi. Item brief aslinya minta "Claude API", tapi diganti AI gratisan (**Google Gemini**, tier gratis Google AI Studio) supaya bisa jalan tanpa API key berbayar.
 
 Fase 3 item 4: keempat Ward lain (Chain, Craft, Watch, Hearth) sekarang **sama-sama hidup** -- `lib/agents/research-wright.ts` (khusus Research) diganti `lib/agents/wright-runtime.ts` yang generik untuk kelima Ward. Fase 3 item 5: job baru tidak lagi selalu jatuh ke satu Wright tetap -- `selectWright()` di file yang sama memilih Wright non-Warden yang paling idle di Ward itu (lihat detail kriteria di komentar fungsinya).
 
@@ -269,20 +269,21 @@ Ini menyalakan tiga tabel (`jobs`, `job_events`, `agents`) di publication `supab
 - Ada race condition kecil di Supabase Realtime: event yang ditulis dalam ~1-3 detik pertama setelah sebuah channel baru selesai `SUBSCRIBED` kadang tidak terkirim ([supabase-js#1599](https://github.com/supabase/supabase-js/issues/1599)). Dalam alur normal (buka halaman dulu, baru posting job dari halaman lain) ini jarang kerasa, tapi kalau kejadian, refresh manual tetap jadi fallback yang aman.
 - Belum ada indikator "live" atau status koneksi channel di UI -- kalau WebSocket putus (mis. laptop sleep), tidak ada tanda visual selain data berhenti bergerak. Reconnect otomatis ditangani `supabase-js`, tapi belum ada toast/badge yang mengonfirmasinya ke pengguna.
 
-## Pembayaran dengan $WAGEHOLD (simulasi vs on-chain)
+## Pembayaran dengan $WAGE (simulasi vs on-chain)
 
-Wage dibayar dengan token **$WAGEHOLD**; simbolnya dipusatkan di `lib/currency.ts`
-(`WAGE_SYMBOL`). Agent (Research Ward/Deepdive) bekerja sama persis di kedua mode.
+Wage dibayar dengan satu token saja, **$WAGE** (tidak ada token per-agent); labelnya dipusatkan
+di `lib/currency.ts` (`WAGE_TOKEN` = "$WAGE" di dalam kalimat, `WAGE_UNIT` = "WAGE" setelah
+angka, `WAGE_SPLIT` = pembagian 60/20/10/10). Agent (Research Ward/Deepdive) bekerja sama persis di kedua mode.
 
 - **Simulasi** (`NEXT_PUBLIC_STRONGBOX_ADDRESS` atau `NEXT_PUBLIC_WAGE_TOKEN_ADDRESS`
   kosong): wage hanya tercatat di Postgres, tidak perlu connect wallet. Form Post a Job
   menampilkan catatan "Simulation mode".
 - **On-chain** (kedua env terisi): user wajib connect wallet; wage dikunci di
   `WageholdStrongbox`. CA token saja tidak cukup -- Strongbox harus di-deploy dulu dengan
-  CA $WAGEHOLD (`WAGE_TOKEN_ADDRESS` di `contracts/.env`), lalu alamatnya diisi ke env.
+  CA $WAGE (`WAGE_TOKEN_ADDRESS` di `contracts/.env`), lalu alamatnya diisi ke env.
   Langkah lengkap ada di komentar `.env.local.example`.
 - Kolom `budget_usdc` / field `budgetUsdc` tetap bernama itu (tidak di-rename supaya tidak
-  butuh migrasi); isinya adalah jumlah wage dalam $WAGEHOLD.
+  butuh migrasi); isinya adalah jumlah wage dalam $WAGE.
 
 ## Wallet connect (Fase 2 item 5)
 

@@ -28,7 +28,7 @@ import {
  *   - `WAGEHOLD_SPLITTER_ADDRESS` set  -> payee = the Splitter, and the job is
  *     registered there (`registerJob`) with the Wright's wallet (or
  *     `WAGEHOLD_PATRON_POOL_ADDRESS`) as the Patron pool. After the client's
- *     seal, `pullAndSplit` divides the wage 70/20/10 on-chain.
+ *     seal, `pullAndSplit` divides the wage 60/20/10/10 on-chain.
  *   - Splitter not set                 -> payee = the Wright's own wallet
  *     (`agents.wallet`), no split (only sensible for an early testnet run).
  *
@@ -181,7 +181,7 @@ export type SplitResult =
 /**
  * After the client's seal: calls `WageholdSplitter.pullAndSplit(jobId)`,
  * which pulls the released wage out of the Strongbox and credits Patrons /
- * Lamp Oil / Tithe 70/20/10 (each destination then withdraws for itself).
+ * Lamp Oil / Tithe 60/20/10 and books the 10% Furnace share (each destination then withdraws for itself; anyone can call burn()).
  * `pullAndSplit` is permissionless -- the council key is only used here as a
  * funded account to send it, so a failure is never fatal: anyone can call it
  * later, and the caller records a "split pending" event instead.

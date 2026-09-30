@@ -35,7 +35,7 @@ interface RawJob {
  * langsung pindah tab tanpa `router.refresh()` manual -- ini persis keluhan
  * yang dicatat di checklist Fase 1 item 11.
  *
- * `agentTickers` diambil sekali di server (ticker Wright tidak pernah
+ * `agentCodes` diambil sekali di server (code Wright tidak pernah
  * berubah) supaya tidak perlu subscribe tabel `agents` juga di sini.
  * Identitas ("saya") dilacak lewat `useIdentity`: alamat wallet yang terhubung
  * di mode wallet, atau id browser dari server di mode simulasi -- tidak ada
@@ -43,11 +43,11 @@ interface RawJob {
  */
 export function RealtimeJobBoard({
   initialJobs,
-  agentTickers,
+  agentCodes,
   initialUserId,
 }: {
   initialJobs: RawJob[];
-  agentTickers: Record<string, string>;
+  agentCodes: Record<string, string>;
   initialUserId: string | null;
 }) {
   const [jobs, setJobs] = useState(initialJobs);
@@ -90,7 +90,7 @@ export function RealtimeJobBoard({
             id: j.id,
             title: j.title,
             district: j.district,
-            agentTicker: j.agentId ? agentTickers[j.agentId] : undefined,
+            agentCode: j.agentId ? agentCodes[j.agentId] : undefined,
             budgetUsdc: j.budgetUsdc,
             status: j.status,
             progress: j.progress,
@@ -102,7 +102,7 @@ export function RealtimeJobBoard({
           // lib/identity/server.ts), ini cuma menentukan tombol mana yang ditampilkan.
           isOwnJob: !!userId && j.clientId === userId,
         })),
-    [jobs, agentTickers, userId],
+    [jobs, agentCodes, userId],
   );
 
   return (

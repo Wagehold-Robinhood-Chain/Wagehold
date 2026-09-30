@@ -1,6 +1,6 @@
 'use client';
 
-import { WAGE_SYMBOL } from '@/lib/currency';
+import { WAGE_UNIT } from '@/lib/currency';
 import { useState } from 'react';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'motion/react';
@@ -64,7 +64,7 @@ export function JobCard({
   const [note, setNote] = useState('');
   // Rating wajib kalau job punya Wright -- 0 = belum dipilih, tombol seal terkunci.
   const [rating, setRating] = useState(0);
-  const needsRating = !!job.agentTicker && rating === 0;
+  const needsRating = !!job.agentCode && rating === 0;
 
   function confirmSendBack() {
     if (!note.trim()) return;
@@ -92,13 +92,15 @@ export function JobCard({
           </span>
         )}
         <span className="whitespace-nowrap font-mono text-[12.5px] tabular-nums text-text">
-          {job.budgetUsdc.toLocaleString('en-US')} {WAGE_SYMBOL}
+          {job.budgetUsdc.toLocaleString('en-US')} {WAGE_UNIT}
         </span>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11.5px] text-muted">
-        <span>{WARD_LABEL[job.district]}</span>
-        {job.agentTicker && <span>${job.agentTicker}</span>}
+        <span>
+          {WARD_LABEL[job.district]}
+          {job.agentCode ? ` · ${job.agentCode}` : ''}
+        </span>
       </div>
 
       {(job.status === 'open' || job.status === 'working') && (
@@ -110,7 +112,7 @@ export function JobCard({
           <span>
             {job.status === 'open'
               ? 'The Warden is choosing a Wright…'
-              : `${job.agentTicker ? `$${job.agentTicker}` : 'A Wright'} is working on this brief · ${Math.round(job.progress)}%`}
+              : `${job.agentCode || 'A Wright'} is working on this brief · ${Math.round(job.progress)}%`}
           </span>
         </div>
       )}
@@ -157,7 +159,7 @@ export function JobCard({
             <p className="text-[11.5px] text-warn">
               Awaiting your seal to release the wage.
             </p>
-            {job.agentTicker && (
+            {job.agentCode && (
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] text-muted">
                   Rate this Wright&apos;s work (required to set the seal)

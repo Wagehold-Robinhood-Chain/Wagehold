@@ -5,16 +5,17 @@
  * sealed job & rating 4.9 padahal belum ada satu pun baris `jobs` berstatus
  * 'paid').
  *
- * Revenue = 70% Patron share dari budget tiap job yang sudah di-seal -- sama
- * persis dengan yang dikreditkan approveJob() di lib/supabase/queries.ts.
+ * Revenue = wage KOTOR (gross) dari tiap job yang sudah di-seal -- sama persis dengan
+ * yang dikreditkan approveJob() di lib/supabase/queries.ts (Revision 1, B2: sebelumnya
+ * tampil porsi patron 70%, sekarang 60% -- angka kotor tidak bergantung pada split).
  * Tabel `jobs` belum punya kolom paid_at, jadi ini akumulasi semua job
  * 'paid', bukan jendela 30 hari sungguhan.
  *
  * Rating = rata-rata `jobs.rating` (1-5, opsional, diisi client saat
  * Set the seal -- lihat 0007_job_rating.sql) dari job 'paid' yang di-rate.
- * Job 'paid' tanpa rating tidak ikut dihitung. 0 kalau belum ada satupun.
+ * Job 'paid' tanpa rating tidak ikut dihitung. `null` kalau belum ada satupun
+ * (UI menampilkan "No ratings yet", bukan 0.0 -- Revision 1, B1).
  */
-const PATRON_SHARE = 0.7;
 
 /**
  * Fase 3 item 3: rank (apprentice/journeyman/master) sekarang juga
@@ -46,9 +47,9 @@ const PATRON_SHARE = 0.7;
  */
 export function deriveRank(
   jobsSealed: number,
-  rating: number,
+  rating: number | null,
 ): 'apprentice' | 'journeyman' | 'master' {
-  if (jobsSealed >= 20 && rating >= 4.5) return 'master';
+  if (jobsSealed >= 20 && (rating ?? 0) >= 4.5) return 'master';
   if (jobsSealed >= 5) return 'journeyman';
   return 'apprentice';
 }
@@ -67,7 +68,7 @@ export const RANK_WEIGHT: Record<
 
 export function deriveAgentStats(
   jobs: { status: string; budgetUsdc: number; rating?: number | null }[],
-): { jobsSealed: number; revenue30d: number; rating: number } {
+): { jobsSealed: number; revenue30d: number; rating: number | null } {
   let jobsSealed = 0;
   let revenue = 0;
   let ratingSum = 0;
@@ -75,7 +76,7 @@ export function deriveAgentStats(
   for (const j of jobs) {
     if (j.status !== 'paid') continue;
     jobsSealed += 1;
-    revenue += Math.round(j.budgetUsdc * PATRON_SHARE * 100) / 100;
+    revenue += j.budgetUsdc;
     if (j.rating != null) {
       ratingSum += j.rating;
       ratingCount += 1;
@@ -85,7 +86,7 @@ export function deriveAgentStats(
     jobsSealed,
     revenue30d: Math.round(revenue * 100) / 100,
     rating:
-      ratingCount > 0 ? Math.round((ratingSum / ratingCount) * 10) / 10 : 0,
+      ratingCount > 0 ? Math.round((ratingSum / ratingCount) * 10) / 10 : null,
   };
 }
 
@@ -100,7 +101,7 @@ export function deriveAgentStats(
  * bawahnya).
  *
  *  - jobsSealed = total job 'paid' seluruh Ward
- *  - revenue30d = total 70% Patron share seluruh Ward
+ *  - revenue30d = total wage kotor (gross) seluruh Ward
  *  - rating     = rata-rata gabungan semua job ber-rating di Ward itu
  *                 (bobot per job, bukan rata-rata dari rata-rata Wright --
  *                 Wright dengan 30 job tidak boleh sama beratnya dengan yang
@@ -117,6 +118,6 @@ export function deriveWardStats(
     rating?: number | null;
     agentId?: string | null;
   }[],
-): { jobsSealed: number; revenue30d: number; rating: number } {
+): { jobsSealed: number; revenue30d: number; rating: number | null } {
   return deriveAgentStats(wardJobs.filter((j) => j.agentId != null));
 }

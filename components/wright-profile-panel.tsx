@@ -1,6 +1,6 @@
 'use client';
 
-import { WAGE_SYMBOL } from '@/lib/currency';
+import { WAGE_SPLIT, WAGE_UNIT } from '@/lib/currency';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'motion/react';
 import { Panel, PanelHeader, PanelScroll } from '@/components/ui/panel';
@@ -10,12 +10,12 @@ import { Button } from '@/components/ui/button';
 import { StatusPill } from '@/components/ui/status-pill';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { RevenueSplit } from '@/components/revenue-split';
+import { BondLine, PatronageSection } from '@/components/patronage-section';
+import type { PatronageSummary } from '@/lib/patronage';
+import { formatWage } from '@/lib/patronage';
 import { cn } from '@/lib/cn';
 import { RANK_LABEL, WARD_COLOR_HEX, WARD_LABEL } from '@/types/domain';
 import type { AgentDetail, JobSummary } from '@/types/domain';
-
-// Split tetap sesuai Charter Article VI/VII/VIII -- bukan per-agent.
-const FIXED_SPLIT = { patronsPct: 70, lampOilPct: 20, tithePct: 10 };
 
 function SectionLabel({ children }: { children: string }) {
   return (
@@ -34,11 +34,16 @@ export function WrightProfilePanel({
   agent,
   currentJob,
   sealedJobs,
+  patronage,
+  canIdentify,
   className,
 }: {
   agent: AgentDetail | null;
   currentJob: JobSummary | null;
   sealedJobs: JobSummary[];
+  /** Ringkasan stake bangunan ini + stake/earned user yang sedang melihat. */
+  patronage: PatronageSummary;
+  canIdentify: boolean;
   className?: string;
 }) {
   return (
@@ -64,7 +69,7 @@ export function WrightProfilePanel({
             >
               <div className="flex flex-col gap-2.5 border-b border-line px-3.5 py-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Chip variant="ticker">${agent.ticker}</Chip>
+                  <Chip variant="sigil">{agent.code}</Chip>
                   <Chip>
                     <i
                       className="inline-block size-2 rounded-full"
@@ -88,17 +93,24 @@ export function WrightProfilePanel({
               <div className="grid grid-cols-2 border-b border-line">
                 {[
                   {
-                    label: 'Revenue 30d',
-                    value: `${Math.round(agent.revenue30d).toLocaleString('en-US')} ${WAGE_SYMBOL}`,
+                    label: 'Revenue 30d (gross wages)',
+                    value: `${Math.round(agent.revenue30d).toLocaleString('en-US')} ${WAGE_UNIT}`,
                     gold: true,
                   },
                   {
+                    label: 'Staked by patrons',
+                    value: formatWage(agent.stakedWage),
+                  },
+                  {
                     label: 'Patrons',
-                    value: agent.holders.toLocaleString('en-US'),
+                    value: agent.stakerCount.toLocaleString('en-US'),
                   },
                   {
                     label: 'Client rating',
-                    value: `${agent.rating.toFixed(1)} / 5`,
+                    value:
+                      agent.rating != null
+                        ? `${agent.rating.toFixed(1)} / 5`
+                        : 'No ratings yet',
                   },
                   { label: 'Sealed jobs', value: String(agent.jobsSealed) },
                 ].map((s, i) => (
@@ -106,8 +118,9 @@ export function WrightProfilePanel({
                     key={s.label}
                     className={cn(
                       'flex flex-col gap-0.5 px-3.5 py-2.5',
-                      i % 2 === 0 && 'border-r border-line',
-                      i < 2 && 'border-b border-line',
+                      i % 2 === 0 && i !== 4 && 'border-r border-line',
+                      i < 4 && 'border-b border-line',
+                      i === 4 && 'col-span-2',
                     )}
                   >
                     <span className="text-[10.5px] uppercase tracking-wider text-faint">
@@ -141,20 +154,35 @@ export function WrightProfilePanel({
                     <p className="text-[11.5px] text-muted">
                       {WARD_LABEL[currentJob.district]} ·{' '}
                       {currentJob.budgetUsdc.toLocaleString('en-US')}{' '}
-                      {WAGE_SYMBOL} in the Strongbox
+                      {WAGE_UNIT} in the Strongbox
                       {currentJob.status === 'review' && ' · awaiting seal'}
                     </p>
                   </>
                 ) : (
                   <p className="text-[12.5px] text-faint">
-                    No active job -- open for hire.
+                    No active job. Open for hire.
                   </p>
                 )}
               </div>
 
               <div className="flex flex-col gap-2 border-b border-line px-3.5 py-3">
-                <SectionLabel>Wage split (escrow release)</SectionLabel>
-                <RevenueSplit data={FIXED_SPLIT} />
+                <SectionLabel>Where each wage goes (on seal)</SectionLabel>
+                <RevenueSplit data={WAGE_SPLIT} />
+              </div>
+
+              <div className="flex flex-col gap-2 border-b border-line px-3.5 py-3">
+                <SectionLabel>Patronage</SectionLabel>
+                <PatronageSection
+                  agentId={agent.id}
+                  isLead={agent.isLead}
+                  stakedWage={patronage.stakedWage}
+                  stakerCount={patronage.stakerCount}
+                  myStake={patronage.myStake}
+                  myEarned={patronage.myEarned}
+                  mySharePct={patronage.mySharePct}
+                  canIdentify={canIdentify}
+                />
+                <BondLine bondWage={agent.bondWage} />
               </div>
 
               <div className="flex flex-col gap-1.5 border-b border-line px-3.5 py-3">
@@ -177,7 +205,7 @@ export function WrightProfilePanel({
                           {j.title}
                         </Link>
                         <span className="whitespace-nowrap font-mono tabular-nums text-text">
-                          {j.budgetUsdc.toLocaleString('en-US')}
+                          {j.budgetUsdc.toLocaleString('en-US')} {WAGE_UNIT}
                         </span>
                       </li>
                     ))}
@@ -186,9 +214,15 @@ export function WrightProfilePanel({
               </div>
 
               <div className="flex flex-wrap gap-2 px-3.5 py-3">
-                <Link href={`/jobs/new?district=${agent.district}`}>
+                <Link
+                  href={
+                    agent.isLead
+                      ? `/jobs/new?district=${agent.district}`
+                      : `/jobs/new?agent=${agent.id}`
+                  }
+                >
                   <Button variant="primary" size="small">
-                    Hire ${agent.ticker}
+                    Hire {agent.name}
                   </Button>
                 </Link>
                 <Link href={`/agents/${agent.id}`}>

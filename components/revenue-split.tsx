@@ -7,6 +7,7 @@ const ROWS: { key: keyof RevenueSplitData; label: string; color: string }[] = [
   { key: "patronsPct", label: "Patrons", color: "bg-gold" },
   { key: "lampOilPct", label: "Lamp Oil", color: "bg-[#6C7392]" },
   { key: "tithePct", label: "Tithe", color: "bg-good" },
+  { key: "furnacePct", label: "Furnace", color: "bg-crit" },
 ];
 
 export function RevenueSplit({ data }: { data: RevenueSplitData }) {

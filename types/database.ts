@@ -6,7 +6,7 @@
 //
 // Catatan (sesi Fase 1 item 10): setiap tabel juga butuh `Relationships`
 // (array kosong di sini, karena kita tidak query embedded select -- lihat
-// alasannya di attachAgentTickers, lib/supabase/queries.ts), dan skema
+// alasannya di attachAgentCodes, lib/supabase/queries.ts), dan skema
 // butuh `Views`/`Functions`/`Enums` kosong. Tanpa keempatnya,
 // @supabase/postgrest-js versi baru menolak menginferensikan tipe row sama
 // sekali (semuanya jatuh ke `never`) -- ini bukan bug di kode lain, cuma
@@ -16,6 +16,18 @@
 
 import type { DistrictId, JobStatus, Rank } from '@/types/enums';
 
+/** Hasil record_wage_split() (0013_stakes_furnace_bond.sql). */
+export interface WageSplitResult {
+  gross: number;
+  patrons: number;
+  lampOil: number;
+  tithe: number;
+  furnace: number;
+  distributed: number;
+  treasuryRedirect: number;
+  stakerCount: number;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -24,7 +36,7 @@ export interface Database {
         Row: {
           id: string;
           name: string;
-          ticker: string;
+          code: string;
           district: DistrictId;
           is_lead: boolean;
           rank: Rank;
@@ -36,13 +48,16 @@ export interface Database {
           model: string;
           revenue_30d: number;
           jobs_sealed: number;
-          rating: number;
+          rating: number | null;
           holders: number;
+          /** WAGE yang dikunci bangunan ini, slashed kalau kalah sengketa
+           *  (0013_stakes_furnace_bond.sql; nilai awal 1000 = placeholder). */
+          bond_wage: number;
           created_at: string;
         };
         Insert: Partial<Database['public']['Tables']['agents']['Row']> & {
           name: string;
-          ticker: string;
+          code: string;
           district: DistrictId;
         };
         Update: Partial<Database['public']['Tables']['agents']['Row']>;
@@ -77,6 +92,69 @@ export interface Database {
         };
         Update: Partial<Database['public']['Tables']['jobs']['Row']>;
       };
+      stakes: {
+        Relationships: [];
+        Row: {
+          id: string;
+          /** `sim:<hash>` (simulasi) atau alamat wallet lowercase -- sama dengan jobs.client_id. */
+          staker_id: string;
+          agent_id: string;
+          /** 0 = sudah menarik semua stake (baris dipertahankan untuk riwayat `earned`). */
+          amount: number;
+          earned: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['stakes']['Row']> & {
+          staker_id: string;
+          agent_id: string;
+        };
+        Update: Partial<Database['public']['Tables']['stakes']['Row']>;
+      };
+      stake_payouts: {
+        Relationships: [];
+        Row: {
+          id: string;
+          job_id: string;
+          agent_id: string;
+          staker_id: string;
+          amount: number;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['stake_payouts']['Row']> & {
+          job_id: string;
+          agent_id: string;
+          staker_id: string;
+          amount: number;
+        };
+        Update: Partial<Database['public']['Tables']['stake_payouts']['Row']>;
+      };
+      wage_splits: {
+        Relationships: [];
+        Row: {
+          job_id: string;
+          agent_id: string;
+          gross: number;
+          patrons: number;
+          lamp_oil: number;
+          tithe: number;
+          furnace: number;
+          /** Bagian patron yang tidak terbagi ke staker -> treasury. */
+          treasury_redirect: number;
+          staker_count: number;
+          created_at: string;
+        };
+        Insert: Partial<Database['public']['Tables']['wage_splits']['Row']> & {
+          job_id: string;
+          agent_id: string;
+          gross: number;
+          patrons: number;
+          lamp_oil: number;
+          tithe: number;
+          furnace: number;
+        };
+        Update: Partial<Database['public']['Tables']['wage_splits']['Row']>;
+      };
       job_events: {
         Relationships: [];
         Row: {
@@ -97,7 +175,27 @@ export interface Database {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      stake_wage: {
+        Args: { p_staker: string; p_agent: string; p_amount: number };
+        Returns: number;
+      };
+      unstake_wage: {
+        Args: { p_staker: string; p_agent: string; p_amount: number };
+        Returns: number;
+      };
+      record_wage_split: {
+        Args: {
+          p_job_id: string;
+          p_patrons_pct: number;
+          p_lamp_oil_pct: number;
+          p_tithe_pct: number;
+          p_furnace_pct: number;
+        };
+        /** null = job tidak punya Wright, belum 'paid', atau sudah pernah dicatat. */
+        Returns: WageSplitResult | null;
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

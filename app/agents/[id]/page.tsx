@@ -1,5 +1,7 @@
 import { notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getInitialUserId } from '@/lib/identity/server';
+import { summarizeStakes } from '@/lib/patronage';
 import {
   deriveAgentStats,
   deriveRank,
@@ -10,6 +12,7 @@ import {
   listAgentsByDistrict,
   listJobsByAgent,
   listJobsByDistrict,
+  listStakes,
 } from '@/lib/supabase/queries';
 import { AgentProfile } from '@/components/agent-profile';
 import { SiteNav } from '@/components/site-nav';
@@ -31,10 +34,13 @@ export default async function AgentProfilePage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [{ data: agentRow, error: agentError }, jobsRes] = await Promise.all([
-    getAgentById(supabase, id),
-    listJobsByAgent(supabase, id),
-  ]);
+  const [{ data: agentRow, error: agentError }, jobsRes, stakes, userId] =
+    await Promise.all([
+      getAgentById(supabase, id),
+      listJobsByAgent(supabase, id),
+      listStakes(supabase),
+      getInitialUserId(),
+    ]);
 
   if (agentError || !agentRow) {
     notFound();
@@ -61,14 +67,14 @@ export default async function AgentProfilePage({
   // seluruh Ward -- lihat deriveWardStats di lib/agent-stats.ts -- dan daftar
   // Sealed jobs di bawahnya juga milik seluruh Wright di Ward itu.
   let wardJobs = jobs;
-  const tickerById = new Map<string, string>([[agentRow.id, agentRow.ticker]]);
+  const codeById = new Map<string, string>([[agentRow.id, agentRow.code]]);
   if (agentRow.is_lead) {
     const [wardJobsRes, wardAgentsRes] = await Promise.all([
       listJobsByDistrict(supabase, agentRow.district),
       listAgentsByDistrict(supabase, agentRow.district),
     ]);
     wardJobs = wardJobsRes.data ?? [];
-    for (const a of wardAgentsRes.data ?? []) tickerById.set(a.id, a.ticker);
+    for (const a of wardAgentsRes.data ?? []) codeById.set(a.id, a.code);
   }
 
   const stats = agentRow.is_lead
@@ -88,10 +94,14 @@ export default async function AgentProfilePage({
         })),
       );
 
+  // Patronage: pool bangunan ini + stake/earned milik pengunjung (mode simulasi: cookie
+  // browser; mode wallet: server tidak tahu siapa pengunjungnya, jadi 0).
+  const patronage = summarizeStakes(stakes, agentRow.id, userId);
+
   const agent: AgentDetail = {
     id: agentRow.id,
     name: agentRow.name,
-    ticker: agentRow.ticker,
+    code: agentRow.code,
     district: agentRow.district,
     // Fase 3 item 3: rank dari sealed jobs + rating sungguhan, bukan lagi
     // kolom agents.rank (angka demo) -- Warden tetap dari is_lead, tidak
@@ -103,7 +113,9 @@ export default async function AgentProfilePage({
     status,
     revenue30d: stats.revenue30d,
     description: agentRow.description,
-    holders: agentRow.holders,
+    stakerCount: patronage.stakerCount,
+    stakedWage: patronage.stakedWage,
+    bondWage: Number(agentRow.bond_wage ?? 0),
     rating: stats.rating,
     jobsSealed: stats.jobsSealed,
   };
@@ -116,9 +128,9 @@ export default async function AgentProfilePage({
       id: j.id,
       title: j.title,
       district: j.district,
-      agentTicker:
-        (j.agent_id ? tickerById.get(j.agent_id) : undefined) ??
-        agentRow.ticker,
+      agentCode:
+        (j.agent_id ? codeById.get(j.agent_id) : undefined) ??
+        agentRow.code,
       budgetUsdc: Number(j.budget_usdc),
       status: j.status,
       progress: j.progress,
@@ -139,7 +151,12 @@ export default async function AgentProfilePage({
 
       <div className="flex flex-1 justify-center overflow-auto py-2">
         <div className="w-full max-w-xl">
-          <AgentProfile agent={agent} sealedJobs={sealedJobs} />
+          <AgentProfile
+            agent={agent}
+            sealedJobs={sealedJobs}
+            patronage={patronage}
+            canIdentify={!!userId}
+          />
         </div>
       </div>
 

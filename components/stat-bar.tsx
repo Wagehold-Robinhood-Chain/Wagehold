@@ -7,6 +7,8 @@ export interface Stat {
   label: string;
   value: string;
   gold?: boolean;
+  /** Warna merah (Furnace = yang dibakar). */
+  crit?: boolean;
 }
 
 export function StatBar({ stats }: { stats: Stat[] }) {
@@ -29,7 +31,7 @@ export function StatBar({ stats }: { stats: Stat[] }) {
                 transition={{ duration: 0.25, ease: "easeOut" }}
                 className={cn(
                   "font-mono text-[15px] tabular-nums",
-                  s.gold ? "text-gold" : "text-text"
+                  s.gold ? "text-gold" : s.crit ? "text-crit" : "text-text"
                 )}
               >
                 {s.value}

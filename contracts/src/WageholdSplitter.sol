@@ -7,12 +7,12 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {WageholdStrongbox} from "./WageholdStrongbox.sol";
 
 /// @title WageholdSplitter
-/// @notice Splits a released wage 70/20/10 between Patrons, Lamp Oil, and the Tithe
-/// (`wagehold-lore.md` §6, `wagehold-handoff.md` §6.2 -- Fase 2 item 2).
+/// @notice Splits a released wage 60/20/10/10 between Patrons, Lamp Oil, the Tithe and the
+/// Furnace (burn) -- Revision 1 (`wagehold-lore.md` v2, `wagehold-handoff.md` v2).
 /// @dev This contract is the `payee` `WageholdStrongbox` was already designed to accept without
 /// any change to it (see `WageholdStrongbox` scope note): once a job's payee is set to a
 /// `WageholdSplitter`, `approve()` credits the *whole* wage to this contract's pending balance
-/// in the Strongbox, same as it would credit a plain wallet. Splitting that single credit three
+/// in the Strongbox, same as it would credit a plain wallet. Splitting that single credit four
 /// ways per job needs bookkeeping this contract owns, because `WageholdStrongbox.pendingWithdrawals`
 /// is keyed by address only -- it has no notion of "this slice of the balance belongs to job X".
 /// `registerJob` is that bookkeeping: it snapshots a job's amount and its Patron pool address
@@ -26,8 +26,9 @@ import {WageholdStrongbox} from "./WageholdStrongbox.sol";
 ///   3. Client calls `strongbox.approve(jobId)` -- Strongbox credits this contract's pending
 ///      balance by the job's full amount.
 ///   4. Anyone calls `splitter.pullAndSplit(jobId)` -- pulls from the Strongbox if needed and
-///      credits Patrons / Lamp Oil / Tithe here, each by pull-payment.
+///      credits Patrons / Lamp Oil / Tithe here, each by pull-payment, and books the Furnace share.
 ///   5. Each of the three destinations calls `splitter.withdraw()` on their own behalf.
+///   6. Anyone calls `splitter.burn()` to send the booked Furnace share to the dead address.
 ///
 /// One `WageholdSplitter` can serve many Wrights and many jobs: `lampOilTreasury` and
 /// `titheTreasury` are shared (the Charter's split percentages are the same for every Wright --
@@ -37,16 +38,24 @@ import {WageholdStrongbox} from "./WageholdStrongbox.sol";
 contract WageholdSplitter is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    /// @notice Basis-point weights for the 70/20/10 split. Sum to `BPS_DENOM` exactly.
-    uint256 public constant PATRON_BPS = 7_000;
+    /// @notice Basis-point weights for the 60/20/10/10 split. Tithe is not a constant: it takes
+    /// the remainder (10% plus integer-division dust), so the four parts always sum to the
+    /// wage exactly.
+    uint256 public constant PATRON_BPS = 6_000;
     uint256 public constant LAMP_OIL_BPS = 2_000;
     uint256 public constant TITHE_BPS = 1_000;
+    uint256 public constant FURNACE_BPS = 1_000;
     uint256 public constant BPS_DENOM = 10_000;
 
+    /// @notice Burn destination. Conventional dead address: OpenZeppelin's ERC20 rejects
+    /// transfers to `address(0)`, and this works for any ERC20 without needing `burn()` on it.
+    /// Tokens sent here leave circulation but still count in `totalSupply()`.
+    address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+
     struct SplitJob {
-        address patronPool; // where this job's 70% goes -- per-Wright, set at registration
+        address patronPool; // where this job's 60% goes -- per-Wright, set at registration
         uint256 amount; // snapshot of the job's wage at registration time
-        bool split; // true once pullAndSplit has credited all three destinations
+        bool split; // true once pullAndSplit has credited all four parts
     }
 
     /// @notice The ERC20 wages are denominated in (matches `WageholdStrongbox.wageToken`).
@@ -78,15 +87,24 @@ contract WageholdSplitter is ReentrancyGuard {
     /// `pullAndSplit` from crediting the other two destinations.
     mapping(address => uint256) public pendingWithdrawals;
 
+    /// @notice Furnace share booked by `pullAndSplit` and not yet sent to `BURN_ADDRESS`.
+    /// Deferred (see `burn`) so a token that refuses the dead address can never block a split.
+    uint256 public pendingBurn;
+
+    /// @notice Lifetime total actually sent to `BURN_ADDRESS`. Feeds the app's Furnace stat.
+    uint256 public totalBurned;
+
     event JobRegistered(bytes32 indexed jobId, address indexed patronPool, uint256 amount);
     event JobSplit(
         bytes32 indexed jobId,
         address indexed patronPool,
         uint256 patronAmount,
         uint256 lampOilAmount,
-        uint256 titheAmount
+        uint256 titheAmount,
+        uint256 burnAmount
     );
     event Withdrawn(address indexed to, uint256 amount);
+    event Burned(address indexed caller, uint256 amount);
     event CouncilUpdated(address indexed newCouncil);
     event OwnerUpdated(address indexed newOwner);
     event LampOilTreasuryUpdated(address indexed newTreasury);
@@ -103,6 +121,7 @@ contract WageholdSplitter is ReentrancyGuard {
     error JobNotReleasedYet();
     error PayeeChangedSinceRegistration();
     error NothingToWithdraw();
+    error NothingToBurn();
 
     modifier onlyCouncil() {
         if (msg.sender != council) revert NotCouncil();
@@ -142,7 +161,7 @@ contract WageholdSplitter is ReentrancyGuard {
     // Council actions
     // ---------------------------------------------------------------------
 
-    /// @notice Snapshots `jobId`'s wage amount and records which Patron pool gets its 70%,
+    /// @notice Snapshots `jobId`'s wage amount and records which Patron pool gets its 60%,
     /// *before* the job is approved. Must be called after `strongbox.setPayee(jobId,
     /// address(this))` -- reverts if this contract isn't (yet) the job's payee in the Strongbox,
     /// so a job can never be registered against the wrong Splitter instance.
@@ -164,8 +183,9 @@ contract WageholdSplitter is ReentrancyGuard {
     // ---------------------------------------------------------------------
 
     /// @notice Pulls this contract's approved balance from the Strongbox (if any is waiting)
-    /// and credits `jobId`'s registered amount to Patrons / Lamp Oil / Tithe by pull-payment.
-    /// Callable by anyone: it only ever moves a registered job's own wage to the three fixed
+    /// and credits `jobId`'s registered amount to Patrons / Lamp Oil / Tithe by pull-payment and books
+    /// the Furnace share in `pendingBurn`.
+    /// Callable by anyone: it only ever moves a registered job's own wage to the fixed
     /// destinations recorded at `registerJob` time, so there is nothing for an arbitrary caller
     /// to redirect.
     /// @dev Re-checks `job.payee == address(this)` against the Strongbox's current state, not
@@ -179,29 +199,41 @@ contract WageholdSplitter is ReentrancyGuard {
         if (sj.amount == 0) revert JobNotRegistered();
         if (sj.split) revert JobAlreadySplit();
 
-        WageholdStrongbox.Job memory job = strongbox.getJob(jobId);
-        if (job.status != WageholdStrongbox.Status.Released) revert JobNotReleasedYet();
-        if (job.payee != address(this)) revert PayeeChangedSinceRegistration();
+        // Scoped so `job` (a memory pointer) frees its stack slot before the locals below --
+        // the four-way split plus a six-argument event is close to the "stack too deep" limit.
+        {
+            WageholdStrongbox.Job memory job = strongbox.getJob(jobId);
+            if (job.status != WageholdStrongbox.Status.Released) revert JobNotReleasedYet();
+            if (job.payee != address(this)) revert PayeeChangedSinceRegistration();
+        }
 
-        uint256 amount = sj.amount;
         address patronPool = sj.patronPool;
 
-        uint256 patronAmount = (amount * PATRON_BPS) / BPS_DENOM;
-        uint256 lampOilAmount = (amount * LAMP_OIL_BPS) / BPS_DENOM;
-        // Remainder (integer-division dust, at most a few base units) goes to Patrons rather
-        // than being split further or left stranded -- Patrons are the largest and primary
-        // stakeholder in the Charter's split (`wagehold-lore.md` §6).
-        uint256 titheAmount = amount - patronAmount - lampOilAmount;
+        uint256 patronAmount;
+        uint256 lampOilAmount;
+        uint256 burnAmount;
+        uint256 titheAmount;
+        {
+            uint256 amount = sj.amount;
+            patronAmount = (amount * PATRON_BPS) / BPS_DENOM;
+            lampOilAmount = (amount * LAMP_OIL_BPS) / BPS_DENOM;
+            burnAmount = (amount * FURNACE_BPS) / BPS_DENOM;
+            // Remainder (integer-division dust, at most a few base units) goes to the Tithe
+            // rather than being split further or left stranded. Same rule as the app's
+            // `record_wage_split` (migration 0013), so on-chain and recorded numbers agree.
+            titheAmount = amount - patronAmount - lampOilAmount - burnAmount;
+        }
 
         // All effects -- including the event -- happen before the external call below. Nothing
-        // here depends on that call's outcome: the three amounts come entirely from `sj.amount`,
+        // here depends on that call's outcome: the four amounts come entirely from `sj.amount`,
         // snapshotted back at `registerJob`, never from what `_pullFromStrongboxIfNeeded` pulls.
         sj.split = true;
         pendingWithdrawals[patronPool] += patronAmount;
         pendingWithdrawals[lampOilTreasury] += lampOilAmount;
         pendingWithdrawals[titheTreasury] += titheAmount;
+        pendingBurn += burnAmount;
 
-        emit JobSplit(jobId, patronPool, patronAmount, lampOilAmount, titheAmount);
+        emit JobSplit(jobId, patronPool, patronAmount, lampOilAmount, titheAmount, burnAmount);
 
         _pullFromStrongboxIfNeeded();
     }
@@ -231,6 +263,19 @@ contract WageholdSplitter is ReentrancyGuard {
         wageToken.safeTransfer(msg.sender, amount);
 
         emit Withdrawn(msg.sender, amount);
+    }
+
+    /// @notice Sends every booked Furnace share to `BURN_ADDRESS`. Permissionless: the
+    /// destination is a constant, so a caller can only ever burn, never redirect.
+    function burn() external nonReentrant {
+        uint256 amount = pendingBurn;
+        if (amount == 0) revert NothingToBurn();
+
+        pendingBurn = 0;
+        totalBurned += amount;
+        wageToken.safeTransfer(BURN_ADDRESS, amount);
+
+        emit Burned(msg.sender, amount);
     }
 
     // ---------------------------------------------------------------------

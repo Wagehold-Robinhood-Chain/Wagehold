@@ -23,7 +23,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 ///                  Every state change emits an event.
 ///
 /// Scope note: this contract only holds and releases the wage. Splitting a released wage
-/// 70/20/10 (Patrons / Lamp Oil / Tithe) is `WageholdSplitter` (Fase 2 item 2) -- `approve`
+/// 60/20/10/10 (Patrons / Lamp Oil / Tithe / Furnace) is `WageholdSplitter` (Fase 2 item 2) -- `approve`
 /// simply credits whatever `payee` address was set for the job, which will *be* the Splitter
 /// once item 2 exists. Nothing here needs to change when that lands.
 ///

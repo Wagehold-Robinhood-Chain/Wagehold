@@ -23,12 +23,12 @@ export default async function JobsPage() {
 
   const rows = jobsRes?.data ?? [];
 
-  // Ticker Wright tidak pernah berubah, jadi cukup diambil sekali di sini
+  // Code Wright tidak pernah berubah, jadi cukup diambil sekali di sini
   // (bukan lewat subscribe tabel `agents`) untuk dicocokkan ke `agent_id`
   // job -- baik yang datang dari render awal maupun lewat Realtime.
-  const agentTickers: Record<string, string> = {};
+  const agentCodes: Record<string, string> = {};
   for (const a of agentsRes.data ?? []) {
-    agentTickers[a.id] = a.ticker;
+    agentCodes[a.id] = a.code;
   }
 
   return (
@@ -46,7 +46,7 @@ export default async function JobsPage() {
         clientId: j.client_id,
         escrowTx: j.escrow_tx,
       }))}
-      agentTickers={agentTickers}
+      agentCodes={agentCodes}
       initialUserId={userId}
     />
   );

@@ -7,7 +7,7 @@ export type AgentStatus = "idle" | "working" | "review";
 export interface AgentSummary {
   id: string;
   name: string;
-  ticker: string;
+  code: string;
   district: DistrictId;
   rank: Rank;
   isLead: boolean;
@@ -17,11 +17,18 @@ export interface AgentSummary {
 
 /** Data lengkap untuk Page E (Wright Profile) -- superset dari AgentSummary
  *  yang dipakai City Dashboard, ditambah field yang cuma dibutuhkan di
- *  halaman profil (description, holders, rating, jobsSealed). */
+ *  halaman profil (description, stakerCount, rating, jobsSealed). */
 export interface AgentDetail extends AgentSummary {
   description: string;
-  holders: number;
-  rating: number;
+  /** Jumlah patron = staker $WAGE yang stake-nya > 0 di bangunan ini
+   *  (turunan tabel `stakes`, bukan lagi kolom demo `agents.holders`). */
+  stakerCount: number;
+  /** Total WAGE yang di-stake patron di bangunan ini. */
+  stakedWage: number;
+  /** WAGE yang dikunci bangunan ini (slashed kalau kalah sengketa). */
+  bondWage: number;
+  /** null = belum ada job ber-rating (UI: "No ratings yet"). */
+  rating: number | null;
   jobsSealed: number;
 }
 
@@ -29,7 +36,7 @@ export interface JobSummary {
   id: string;
   title: string;
   district: DistrictId;
-  agentTicker?: string;
+  agentCode?: string;
   budgetUsdc: number;
   status: JobStatus;
   progress: number;
@@ -45,9 +52,10 @@ export interface LedgerEvent {
 }
 
 export interface RevenueSplitData {
-  patronsPct: number; // 70
+  patronsPct: number; // 60
   lampOilPct: number; // 20
   tithePct: number; // 10
+  furnacePct: number; // 10 (dibakar)
 }
 
 export const WARD_LABEL: Record<DistrictId, string> = {

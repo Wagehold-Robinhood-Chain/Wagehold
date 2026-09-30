@@ -1,7 +1,7 @@
 // Klien tipis untuk Gemini API (REST langsung, tanpa SDK tambahan).
 //
 // Fase 1 item 10 minta "1 agent Research Ward ke Claude API", tapi dipakai
-// dengan AI gratisan -- jadi Deepdive ($DIVE) memanggil Google Gemini
+// dengan AI gratisan -- jadi Deepdive (DIVE) memanggil Google Gemini
 // (tier gratis Google AI Studio) lewat file ini, bukan Anthropic API.
 // Kalau nanti mau pindah ke Claude API sungguhan, cukup tulis
 // `lib/agents/claude.ts` senada dan tukar importnya di research-wright.ts --

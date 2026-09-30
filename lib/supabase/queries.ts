@@ -1,4 +1,5 @@
-import { WAGE_SYMBOL } from '@/lib/currency';
+import { WAGE_SPLIT, WAGE_UNIT } from '@/lib/currency';
+import { formatWage } from '@/lib/patronage';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/types/database';
 import type { DistrictId, JobStatus } from '@/types/enums';
@@ -22,7 +23,7 @@ export interface RecentEvent {
 
 /** Event terbaru lintas semua job, dipakai Ledger Wall di City Dashboard.
  *  Query 2 langkah (bukan embedded select) dengan alasan yang sama seperti
- *  attachAgentTickers -- types/database.ts belum punya tipe relasi hasil
+ *  attachAgentCodes -- types/database.ts belum punya tipe relasi hasil
  *  `supabase gen types`. */
 export async function listRecentEvents(
   supabase: Client,
@@ -67,9 +68,60 @@ export async function getAgentById(supabase: Client, id: string) {
   return supabase.from('agents').select('*').eq('id', id).single();
 }
 
+/** Semua stake patron (Patronage). Kecil untuk sekarang, jadi dimuat sekaligus
+ *  dan diringkas per bangunan di klien (lib/patronage.ts). Kalau tabel `stakes`
+ *  belum ada (migrasi 0013 belum jalan) hasilnya kosong, bukan error. */
+export async function listStakes(supabase: Client) {
+  const { data } = await supabase
+    .from('stakes')
+    .select('staker_id, agent_id, amount, earned');
+  return (data ?? []).map((s) => ({
+    stakerId: s.staker_id,
+    agentId: s.agent_id,
+    amount: Number(s.amount),
+    earned: Number(s.earned),
+  }));
+}
+
+/** Total Furnace (dibakar) dan treasury (Counting House = tithe + patron cut
+ *  yang tidak terbagi) dari semua job yang sudah disegel. */
+export async function getWageSplitTotals(supabase: Client) {
+  const { data } = await supabase
+    .from('wage_splits')
+    .select('furnace, tithe, treasury_redirect');
+  let burned = 0;
+  let treasury = 0;
+  for (const r of data ?? []) {
+    burned += Number(r.furnace);
+    treasury += Number(r.tithe) + Number(r.treasury_redirect);
+  }
+  return { burned, treasury };
+}
+
+/** Bagian patron yang pernah diterima satu staker, terbaru dulu (untuk feed "You earned"). */
+export async function listPayoutsByStaker(
+  supabase: Client,
+  stakerId: string,
+  limit = 10,
+) {
+  const { data } = await supabase
+    .from('stake_payouts')
+    .select('id, job_id, agent_id, amount, created_at')
+    .eq('staker_id', stakerId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  return (data ?? []).map((p) => ({
+    id: p.id,
+    jobId: p.job_id,
+    agentId: p.agent_id,
+    amount: Number(p.amount),
+    at: p.created_at,
+  }));
+}
+
 /** Semua job milik satu Wright (agent_id = id), terbaru dulu. Dipakai Page E
  *  (Wright Profile) untuk menurunkan status kerja saat ini (working/review)
- *  dan daftar sealed jobs -- tidak lewat attachAgentTickers karena ticker-nya
+ *  dan daftar sealed jobs -- tidak lewat attachAgentCodes karena code-nya
  *  sudah diketahui dari agent yang sama. */
 export async function listJobsByAgent(supabase: Client, agentId: string) {
   return supabase
@@ -93,7 +145,7 @@ export async function listJobsByDistrict(
     .order('created_at', { ascending: false });
 }
 
-/** Semua agent dalam satu Ward -- untuk memetakan agent_id -> ticker. */
+/** Semua agent dalam satu Ward -- untuk memetakan agent_id -> code. */
 export async function listAgentsByDistrict(
   supabase: Client,
   district: DistrictId,
@@ -125,7 +177,7 @@ export async function listJobs(
   const jobsRes = await query;
   if (jobsRes.error || !jobsRes.data) return jobsRes;
 
-  return { ...jobsRes, data: await attachAgentTickers(supabase, jobsRes.data) };
+  return { ...jobsRes, data: await attachAgentCodes(supabase, jobsRes.data) };
 }
 
 export async function getJobById(supabase: Client, id: string) {
@@ -138,7 +190,7 @@ export async function getJobById(supabase: Client, id: string) {
     .order('at', { ascending: true });
 
   const [job] = jobRes.data
-    ? await attachAgentTickers(supabase, [jobRes.data])
+    ? await attachAgentCodes(supabase, [jobRes.data])
     : [];
 
   return {
@@ -149,30 +201,30 @@ export async function getJobById(supabase: Client, id: string) {
   };
 }
 
-/** Menempel `agent_ticker` ke tiap job lewat query terpisah, karena
+/** Menempel `agent_code` ke tiap job lewat query terpisah, karena
  *  types/database.ts masih placeholder manual (belum punya tipe relasi
  *  hasil `supabase gen types`) -- select embedded ("*, agents(...)") baru
  *  aman dipakai setelah tipe itu digenerate dari schema sungguhan. */
-async function attachAgentTickers<T extends { agent_id: string | null }>(
+async function attachAgentCodes<T extends { agent_id: string | null }>(
   supabase: Client,
   jobs: T[],
-): Promise<(T & { agent_ticker: string | null })[]> {
+): Promise<(T & { agent_code: string | null })[]> {
   const agentIds = [
     ...new Set(jobs.map((j) => j.agent_id).filter((id): id is string => !!id)),
   ];
   if (agentIds.length === 0) {
-    return jobs.map((j) => ({ ...j, agent_ticker: null }));
+    return jobs.map((j) => ({ ...j, agent_code: null }));
   }
 
   const { data: agents } = await supabase
     .from('agents')
-    .select('id, ticker')
+    .select('id, code')
     .in('id', agentIds);
-  const tickerById = new Map((agents ?? []).map((a) => [a.id, a.ticker]));
+  const codeById = new Map((agents ?? []).map((a) => [a.id, a.code]));
 
   return jobs.map((j) => ({
     ...j,
-    agent_ticker: j.agent_id ? (tickerById.get(j.agent_id) ?? null) : null,
+    agent_code: j.agent_id ? (codeById.get(j.agent_id) ?? null) : null,
   }));
 }
 
@@ -190,6 +242,10 @@ export interface CreateJobInput {
   brief: string;
   district: Database['public']['Tables']['jobs']['Row']['district'];
   budgetUsdc: number;
+  /** Hire langsung: bangunan (Wright) yang dipilih client. Kosong = Warden yang memilih.
+   *  Pemanggil (POST /api/jobs) sudah memastikan Wright ini ada, bukan Warden, dan
+   *  berada di `district` yang sama. */
+  agentId?: string;
   /** Tx hash `createJob` di WageholdStrongbox -- hanya diisi lewat alur
    *  Fase 2 item 6 (on-chain sungguhan), null di alur simulasi lama. */
   escrowTx?: string;
@@ -215,6 +271,7 @@ export async function createJob(
       brief: input.brief,
       district: input.district,
       budget_usdc: input.budgetUsdc,
+      ...(input.agentId ? { agent_id: input.agentId } : {}),
       client_id: clientId,
       escrow_tx: input.escrowTx ?? null,
       status: 'open',
@@ -230,8 +287,8 @@ export async function createJob(
     actor: 'client',
     type: 'job_created',
     note: input.escrowTx
-      ? `Wage of ${input.budgetUsdc} ${WAGE_SYMBOL} locked in the Strongbox on-chain.`
-      : `Wage of ${input.budgetUsdc} ${WAGE_SYMBOL} locked in the Strongbox (simulated -- escrow on-chain belum dikonfigurasi)`,
+      ? `Wage of ${input.budgetUsdc} ${WAGE_UNIT} locked in the Strongbox on-chain.`
+      : `Wage of ${input.budgetUsdc} ${WAGE_UNIT} locked in the Strongbox (simulated -- escrow on-chain belum dikonfigurasi)`,
     tx: input.escrowTx ?? null,
   });
 
@@ -248,8 +305,8 @@ export interface ApproveOnChainOptions {
 }
 
 /** Set the seal (Article I): hanya client pemilik job yang boleh approve.
- *  Melepas wage -> status 'paid', kredit demo ke revenue agent (70% Patron
- *  share) supaya City Dashboard punya sesuatu untuk ditampilkan.
+ *  Melepas wage -> status 'paid', kredit demo ke revenue agent (wage kotor,
+ *  Revision 1) supaya City Dashboard punya sesuatu untuk ditampilkan.
  *
  *  Tanpa `onChain` (alur simulasi lama) INI BUKAN transaksi atomik dan
  *  wage-nya cuma catatan database. Dengan `onChain` (Fase 2 item 7), wage
@@ -292,7 +349,8 @@ export async function approveJob(
     };
   }
 
-  const patronShare = Math.round(job.budget_usdc * 0.7 * 100) / 100;
+  // Revenue Wright = wage kotor (lihat lib/agent-stats.ts), bukan porsi patron.
+  const grossWage = Number(job.budget_usdc);
 
   // `.eq("status", "review")` + cek baris terdampak = penjaga atomik: dua request
   // seal bersamaan tidak bisa sama-sama lolos dan mengkredit revenue dua kali.
@@ -314,18 +372,20 @@ export async function approveJob(
 
   const writer = admin;
 
+  let agentName = 'the Wright';
   if (job.agent_id) {
     const { data: agent } = await writer
       .from('agents')
-      .select('revenue_30d, jobs_sealed')
+      .select('name, revenue_30d, jobs_sealed')
       .eq('id', job.agent_id)
       .single();
 
     if (agent) {
+      agentName = agent.name;
       await writer
         .from('agents')
         .update({
-          revenue_30d: Number(agent.revenue_30d) + patronShare,
+          revenue_30d: Number(agent.revenue_30d) + grossWage,
           jobs_sealed: agent.jobs_sealed + 1,
         })
         .eq('id', job.agent_id);
@@ -337,10 +397,51 @@ export async function approveJob(
     actor: 'client',
     type: 'sealed',
     note: onChain
-      ? `Set the seal on-chain. ${job.budget_usdc} ${WAGE_SYMBOL} released from the Strongbox.`
-      : `Set the seal. ${patronShare} ${WAGE_SYMBOL} released to Patrons.`,
+      ? `Set the seal on-chain. ${job.budget_usdc} ${WAGE_UNIT} released from the Strongbox.`
+      : `You set the seal on "${job.title}". ${job.budget_usdc} ${WAGE_UNIT} released: ${WAGE_SPLIT.patronsPct}% to patrons, ${WAGE_SPLIT.lampOilPct}% Lamp Oil, ${WAGE_SPLIT.tithePct}% tithe, ${WAGE_SPLIT.furnacePct}% burned.`,
     tx: onChain?.sealTx ?? null,
   });
+
+  // Revision 1: catat pembagian 60/20/10/10 -- Furnace (burn), pro rata ke staker, dan
+  // aturan "tanpa staker, bagian patron ke treasury". Atomik & idempoten di Postgres
+  // (record_wage_split, 0013). Kegagalan di sini TIDAK membatalkan seal (job sudah
+  // 'paid'); dicatat ke Ledger dan fungsinya aman dipanggil ulang.
+  if (job.agent_id) {
+    const { data: split, error: splitError } = await writer.rpc(
+      'record_wage_split',
+      {
+        p_job_id: jobId,
+        p_patrons_pct: WAGE_SPLIT.patronsPct,
+        p_lamp_oil_pct: WAGE_SPLIT.lampOilPct,
+        p_tithe_pct: WAGE_SPLIT.tithePct,
+        p_furnace_pct: WAGE_SPLIT.furnacePct,
+      },
+    );
+
+    if (splitError) {
+      await writer.from('job_events').insert({
+        job_id: jobId,
+        actor: 'system',
+        type: 'split_record_failed',
+        note: `The wage is released, but the split could not be recorded (${splitError.message}). Is migration 0013 applied?`,
+      });
+    } else if (split) {
+      await writer.from('job_events').insert({
+        job_id: jobId,
+        actor: 'Furnace',
+        type: 'burned',
+        note: `${formatWage(split.furnace)} burned in the Furnace.`,
+      });
+      if (split.stakerCount > 0) {
+        await writer.from('job_events').insert({
+          job_id: jobId,
+          actor: 'patrons',
+          type: 'patrons_paid',
+          note: `${formatWage(split.distributed)} shared among ${split.stakerCount} ${split.stakerCount === 1 ? 'patron' : 'patrons'} of ${agentName}.`,
+        });
+      }
+    }
+  }
 
   return { error: null, status: 200 as const };
 }

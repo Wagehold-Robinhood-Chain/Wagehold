@@ -30,7 +30,7 @@ export interface JobDetailEvent {
 export interface JobAgentInfo {
   id: string;
   name: string;
-  ticker: string;
+  code: string;
   rank: Rank;
 }
 
@@ -54,7 +54,7 @@ function WorkProgress({ job }: { job: JobSummary }) {
         <p className="text-[12.5px] text-muted">
           {waiting
             ? 'The Warden is choosing the best Wright for this brief. This takes about 30 seconds, and this page updates by itself.'
-            : `${job.agentTicker ? `$${job.agentTicker}` : 'Your Wright'} is working on your brief. You can stay here or come back later — you will only be asked to seal once the deliverable is ready.`}
+            : `${job.agentCode || 'Your Wright'} is working on your brief. You can stay here or come back later — you will only be asked to seal once the deliverable is ready.`}
         </p>
         <ProgressBar value={job.progress} />
         <ul className="flex flex-col gap-1.5">
@@ -213,7 +213,7 @@ export function JobDetail({
               className="flex w-fit items-center gap-2 text-[13px] text-text hover:underline"
             >
               <span>{agent.name}</span>
-              <Chip variant="ticker">${agent.ticker}</Chip>
+              <Chip variant="sigil">{agent.code}</Chip>
               <Chip variant="rank">{RANK_LABEL[agent.rank]}</Chip>
             </Link>
           </div>

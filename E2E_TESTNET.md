@@ -35,7 +35,7 @@ bash scripts/e2e-local.sh --with-finding   # + skenario S5 (lihat "Temuan" di ba
    `E2E_CLIENT_PRIVATE_KEY` = kunci wallet client (**harus beda** dari council).
 4. **Jalankan**:
    ```bash
-   npm run e2e            # Strongbox + Splitter 70/20/10, refund, dispute
+   npm run e2e            # Strongbox + Splitter 60/20/10/10, refund, dispute
    npm run e2e:direct     # tanpa Splitter: wage penuh ke wallet Wright
    ```
    Exit code 0 = semua lulus. Laporan per-langkah (hash tx, gas, waktu) ditulis ke
@@ -44,7 +44,7 @@ bash scripts/e2e-local.sh --with-finding   # + skenario S5 (lihat "Temuan" di ba
 Yang dicek (ringkas): wage benar-benar pindah ke Strongbox; server membaca amount dari chain (bukan
 dari klaim client); job yang belum dikunci/Refunded/Disputed ditolak `verifyOnChainLock`/`verifyReleased`;
 `approve` sebelum payee → `PayeeNotSet`; hanya council yang boleh `setPayee`; hanya client yang boleh
-menyegel/refund/dispute (Charter I); `preparePayeeOnChain` idempoten; split persis 70/20/10 tanpa dust
+menyegel/refund/dispute (Charter I); `preparePayeeOnChain` idempoten; split persis 60/20/10/10 tanpa dust
 hilang dan Strongbox kosong untuk job itu; `pullAndSplit` ulang ditolak; `withdraw` menambah saldo token
 sebesar pending; `resolveDispute` menolak jumlah tak pas.
 
@@ -97,7 +97,7 @@ Sisa yang tidak bisa diverifikasi tanpa browser + wallet + Supabase; lakukan sek
    `budget_usdc` di DB = nominal on-chain.
 5. Tunggu Deepdive mengerjakan (`review`), klik **Set the seal** → dua langkah (prepare di server, `approve`
    di wallet); job jadi `paid`, Ledger menampilkan link tx, event `split_pending` **tidak** muncul.
-6. Cek explorer: `SealSet` di Strongbox, `JobSplit` di Splitter (70/20/10).
+6. Cek explorer: `SealSet` di Strongbox, `JobSplit` di Splitter (60/20/10/10).
 7. **Send back** dan `simulasi` (tanpa env escrow) tetap jalan seperti sebelumnya.
 8. Catat kebingungan UX (mis. dua popup wallet berturut-turut, tidak ada indikator menunggu konfirmasi).
 

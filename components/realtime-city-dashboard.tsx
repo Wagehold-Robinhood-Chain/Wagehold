@@ -1,6 +1,8 @@
 'use client';
 
-import { WAGE_SYMBOL } from '@/lib/currency';
+import { WAGE_UNIT } from '@/lib/currency';
+import { summarizeStakes, formatWage, type StakeItem } from '@/lib/patronage';
+import { useWageBalance } from '@/lib/web3/use-wage-balance';
 import { useMemo, useState } from 'react';
 import { CityScene, type CityAgent } from '@/components/city-scene';
 import { StatBar } from '@/components/stat-bar';
@@ -36,15 +38,32 @@ import {
 interface DashboardAgent {
   id: string;
   name: string;
-  ticker: string;
+  code: string;
   district: DistrictId;
   rank: Rank;
   isLead: boolean;
   description: string;
-  holders: number;
-  rating: number;
+  /** WAGE yang dikunci bangunan ini (agents.bond_wage). */
+  bondWage: number;
+  rating: number | null;
   jobsSealed: number;
   revenue30d: number;
+}
+
+/** Bagian patron yang diterima staker (stake_payouts) -- sumber baris feed "You earned". */
+interface DashboardPayout {
+  id: string;
+  jobId: string;
+  agentId: string;
+  amount: number;
+  at: string;
+}
+
+interface WageTotals {
+  /** Total yang dibakar di Furnace. */
+  burned: number;
+  /** Counting House: tithe + bagian patron yang tidak terbagi. */
+  treasury: number;
 }
 
 interface DashboardJob {
@@ -90,22 +109,32 @@ export function RealtimeCityDashboard({
   initialAgents,
   initialJobs,
   initialEvents,
+  initialStakes,
+  initialTotals,
+  initialPayouts,
   initialUserId,
 }: {
   initialAgents: DashboardAgent[];
   initialJobs: DashboardJob[];
   initialEvents: DashboardEvent[];
+  initialStakes: StakeItem[];
+  initialTotals: WageTotals;
+  initialPayouts: DashboardPayout[];
   initialUserId: string | null;
 }) {
   const [agents, setAgents] = useState(initialAgents);
   const [jobs, setJobs] = useState(initialJobs);
   const [events, setEvents] = useState(initialEvents);
+  const [stakes, setStakes] = useState(initialStakes);
+  const [totals, setTotals] = useState(initialTotals);
+  const [payouts, setPayouts] = useState(initialPayouts);
   // Wright yang profilnya tampil di panel kiri -- default: revenue tertinggi
   // (listAgents mengurutkan revenue_30d menurun). Diganti lewat klik gedung.
   const [selectedId, setSelectedId] = useState<string | null>(
     initialAgents[0]?.id ?? null,
   );
   const userId = useIdentity(initialUserId);
+  const walletBalance = useWageBalance();
 
   useRealtimeChanges('job_events', (payload) => {
     if (payload.eventType !== 'INSERT') return; // event tidak pernah di-update/dihapus
@@ -159,14 +188,70 @@ export function RealtimeCityDashboard({
           ? {
               ...a,
               revenue30d: Number(row.revenue_30d),
-              holders: row.holders,
-              rating: Number(row.rating),
+              bondWage: Number(row.bond_wage ?? a.bondWage),
+              rating: row.rating == null ? null : Number(row.rating),
               jobsSealed: row.jobs_sealed,
             }
           : a,
       ),
     );
   });
+
+  // Patronage: stake berubah (stake / unstake / earned bertambah saat seal).
+  useRealtimeChanges('stakes', (payload) => {
+    if (payload.eventType === 'DELETE') return; // baris stake tidak pernah dihapus (amount 0 = ditarik)
+    const row = payload.new;
+    const next: StakeItem = {
+      stakerId: row.staker_id,
+      agentId: row.agent_id,
+      amount: Number(row.amount),
+      earned: Number(row.earned),
+    };
+    setStakes((prev) => {
+      const idx = prev.findIndex(
+        (s) => s.stakerId === next.stakerId && s.agentId === next.agentId,
+      );
+      if (idx === -1) return [...prev, next];
+      const copy = prev.slice();
+      copy[idx] = next;
+      return copy;
+    });
+  });
+
+  // Furnace & Counting House: satu baris wage_splits per job yang disegel.
+  useRealtimeChanges('wage_splits', (payload) => {
+    if (payload.eventType !== 'INSERT') return;
+    const row = payload.new;
+    setTotals((prev) => ({
+      burned: prev.burned + Number(row.furnace),
+      treasury:
+        prev.treasury + Number(row.tithe) + Number(row.treasury_redirect),
+    }));
+  });
+
+  // Hanya payout MILIK user ini yang didengar (untuk baris feed "You earned").
+  useRealtimeChanges(
+    'stake_payouts',
+    (payload) => {
+      if (payload.eventType !== 'INSERT' || !userId) return;
+      const row = payload.new;
+      setPayouts((prev) =>
+        prev.some((p) => p.id === row.id)
+          ? prev
+          : [
+              {
+                id: row.id,
+                jobId: row.job_id,
+                agentId: row.agent_id,
+                amount: Number(row.amount),
+                at: row.created_at,
+              },
+              ...prev,
+            ].slice(0, MAX_EVENTS),
+      );
+    },
+    `staker_id=eq.${userId ?? 'none'}`,
+  );
 
   // Status per agent diturunkan dari job aktifnya -- belum ada kolom
   // `status` di tabel agents, karena status memang milik job, bukan agent.
@@ -189,7 +274,7 @@ export function RealtimeCityDashboard({
   const statsByAgent = useMemo(() => {
     const map = new Map<
       string,
-      { jobsSealed: number; revenue30d: number; rating: number }
+      { jobsSealed: number; revenue30d: number; rating: number | null }
     >();
     for (const a of agents) {
       map.set(a.id, deriveAgentStats(jobs.filter((j) => j.agentId === a.id)));
@@ -205,7 +290,7 @@ export function RealtimeCityDashboard({
   const statsByDistrict = useMemo(() => {
     const map = new Map<
       DistrictId,
-      { jobsSealed: number; revenue30d: number; rating: number }
+      { jobsSealed: number; revenue30d: number; rating: number | null }
     >();
     const districts = new Set(agents.map((a) => a.district));
     for (const d of districts) {
@@ -218,7 +303,7 @@ export function RealtimeCityDashboard({
     () =>
       agents.map((a) => ({
         id: a.id,
-        ticker: a.ticker,
+        code: a.code,
         district: a.district,
         // Warden: akumulasi seluruh Ward (sama dengan Revenue 30D di profil);
         // Wright: job miliknya sendiri.
@@ -253,17 +338,12 @@ export function RealtimeCityDashboard({
     [cityAgents],
   );
 
-  // Treasury belum punya tabel sendiri -- didekati dari 10% tithe yang
-  // proporsional terhadap 70% Patron share yang sudah tercatat di revenue_30d.
-  // Diganti angka sungguhan begitu ada tabel treasury (Fase 2, GET /treasury).
-  const estimatedTithe = useMemo(
-    () => agents.reduce((sum, a) => sum + a.revenue30d * (10 / 70), 0),
-    [agents],
-  );
+  // Counting House & Furnace dibaca dari wage_splits (0013), yang dicatat atomik saat
+  // seal: treasury = tithe + bagian patron yang tidak terbagi (bangunan tanpa staker).
 
-  const agentTickers = useMemo(() => {
+  const agentCodes = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const a of agents) map[a.id] = a.ticker;
+    for (const a of agents) map[a.id] = a.code;
     return map;
   }, [agents]);
 
@@ -277,7 +357,7 @@ export function RealtimeCityDashboard({
           id: j.id,
           title: j.title,
           district: j.district,
-          agentTicker: j.agentId ? agentTickers[j.agentId] : undefined,
+          agentCode: j.agentId ? agentCodes[j.agentId] : undefined,
           budgetUsdc: j.budgetUsdc,
           status: j.status,
           progress: j.progress,
@@ -285,7 +365,7 @@ export function RealtimeCityDashboard({
         },
         isOwnJob: !!userId && j.clientId === userId,
       })),
-    [jobs, agentTickers, userId],
+    [jobs, agentCodes, userId],
   );
 
   // Wright profile (kolom kiri) -- diturunkan dari agents + jobs yang sudah ada di state.
@@ -298,8 +378,9 @@ export function RealtimeCityDashboard({
     const ownStats = statsByAgent.get(a.id) ?? {
       jobsSealed: 0,
       revenue30d: 0,
-      rating: 0,
+      rating: null,
     };
+    const pool = summarizeStakes(stakes, a.id, userId);
     // Warden: agregat seluruh Ward, bukan job miliknya sendiri (selalu 0).
     const stats = a.isLead
       ? (statsByDistrict.get(a.district) ?? ownStats)
@@ -307,7 +388,7 @@ export function RealtimeCityDashboard({
     return {
       id: a.id,
       name: a.name,
-      ticker: a.ticker,
+      code: a.code,
       district: a.district,
       // Fase 3 item 3: rank dari sealed jobs + rating sungguhan (lihat
       // catatan di lib/agent-stats.ts) -- Warden tetap dari a.rank/isLead.
@@ -316,17 +397,33 @@ export function RealtimeCityDashboard({
       status: statusByAgent.get(a.id) ?? 'idle',
       revenue30d: stats.revenue30d,
       description: a.description,
-      holders: a.holders,
+      stakerCount: pool.stakerCount,
+      stakedWage: pool.stakedWage,
+      bondWage: a.bondWage,
       rating: stats.rating,
       jobsSealed: stats.jobsSealed,
     };
-  }, [agents, selectedId, statsByAgent, statsByDistrict, statusByAgent]);
+  }, [
+    agents,
+    selectedId,
+    statsByAgent,
+    statsByDistrict,
+    statusByAgent,
+    stakes,
+    userId,
+  ]);
 
-  const toSummary = (j: DashboardJob, ticker: string): JobSummary => ({
+  // Patronage bangunan yang sedang dipilih: pool total + stake/earned milik user ini.
+  const patronage = useMemo(
+    () => summarizeStakes(stakes, selectedId ?? '', userId),
+    [stakes, selectedId, userId],
+  );
+
+  const toSummary = (j: DashboardJob, code: string): JobSummary => ({
     id: j.id,
     title: j.title,
     district: j.district,
-    agentTicker: ticker,
+    agentCode: code,
     budgetUsdc: j.budgetUsdc,
     status: j.status,
     progress: j.progress,
@@ -339,13 +436,13 @@ export function RealtimeCityDashboard({
     const active =
       mine.find((j) => j.status === 'review') ??
       mine.find((j) => j.status === 'working');
-    return active ? toSummary(active, selectedAgent.ticker) : null;
+    return active ? toSummary(active, selectedAgent.code) : null;
   }, [jobs, selectedAgent]);
 
   const sealedJobs: JobSummary[] = useMemo(() => {
     if (!selectedAgent) return [];
     // Warden: daftar Sealed jobs = seluruh Ward (cocok dengan angka agregat
-    // di atasnya), tiap baris memakai ticker Wright yang mengerjakannya.
+    // di atasnya), tiap baris memakai code Wright yang mengerjakannya.
     const belongs = (j: DashboardJob) =>
       selectedAgent.isLead
         ? j.district === selectedAgent.district && j.agentId != null
@@ -356,29 +453,46 @@ export function RealtimeCityDashboard({
       .map((j) =>
         toSummary(
           j,
-          (j.agentId ? agentTickers[j.agentId] : undefined) ??
-            selectedAgent.ticker,
+          (j.agentId ? agentCodes[j.agentId] : undefined) ??
+            selectedAgent.code,
         ),
       );
-  }, [jobs, selectedAgent, agentTickers]);
+  }, [jobs, selectedAgent, agentCodes]);
 
   const jobTitleById = useMemo(
     () => new Map(jobs.map((j) => [j.id, j.title])),
     [jobs],
   );
 
-  const ledgerEvents: LedgerEvent[] = useMemo(
-    () =>
-      events.map((e) => ({
-        id: e.id,
-        at: e.at,
-        // Judul job diisi bebas oleh user -> WAJIB di-escape (LedgerWall merender HTML).
-        html: `<b>${escapeHtml(e.actor)}</b> ${escapeHtml(e.note ?? e.type)} -- "${escapeHtml(
-          jobTitleById.get(e.jobId) ?? 'a job',
-        )}"`,
-      })),
-    [events, jobTitleById],
+  const agentNameById = useMemo(
+    () => new Map(agents.map((a) => [a.id, a.name])),
+    [agents],
   );
+
+  const ledgerEvents: LedgerEvent[] = useMemo(() => {
+    const shared: LedgerEvent[] = events.map((e) => ({
+      id: e.id,
+      at: e.at,
+      // Judul job diisi bebas oleh user -> WAJIB di-escape (LedgerWall merender HTML).
+      html: `<b>${escapeHtml(e.actor)}</b> ${escapeHtml(e.note ?? e.type)} -- "${escapeHtml(
+        jobTitleById.get(e.jobId) ?? 'a job',
+      )}"`,
+    }));
+    // Baris pribadi (hanya terlihat oleh patron itu sendiri): "You earned {n} WAGE as a
+    // patron of {Wright}". Nominal 0 (mis. pembulatan) tidak ditampilkan.
+    const mine: LedgerEvent[] = payouts
+      .filter((p) => p.amount > 0)
+      .map((p) => ({
+        id: `payout-${p.id}`,
+        at: p.at,
+        html: `<b>You</b> earned ${escapeHtml(formatWage(p.amount))} as a patron of ${escapeHtml(
+          agentNameById.get(p.agentId) ?? 'a Wright',
+        )} -- "${escapeHtml(jobTitleById.get(p.jobId) ?? 'a job')}"`,
+      }));
+    return [...shared, ...mine]
+      .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
+      .slice(0, MAX_EVENTS);
+  }, [events, payouts, jobTitleById, agentNameById]);
 
   return (
     <MotionPage className="flex h-screen flex-col gap-3 p-3">
@@ -394,18 +508,32 @@ export function RealtimeCityDashboard({
           stats={[
             {
               label: 'Counting House',
-              value: `${Math.round(estimatedTithe).toLocaleString('en-US')} ${WAGE_SYMBOL}`,
+              value: `${Math.round(totals.treasury).toLocaleString('en-US')} ${WAGE_UNIT}`,
             },
             {
               label: 'In the Strongbox',
-              value: `${inStrongbox.toLocaleString('en-US')} ${WAGE_SYMBOL}`,
+              value: `${inStrongbox.toLocaleString('en-US')} ${WAGE_UNIT}`,
               gold: true,
+            },
+            {
+              label: 'Burned in the Furnace',
+              value: `${Math.round(totals.burned).toLocaleString('en-US')} ${WAGE_UNIT}`,
+              crit: true,
             },
             { label: 'Sealed jobs', value: String(sealedCount) },
             {
               label: 'Wrights at work',
               value: `${wrightsAtWork} / ${cityAgents.length}`,
             },
+            // Hanya kalau wallet terhubung dan saldonya terbaca (mode wallet).
+            ...(walletBalance !== null
+              ? [
+                  {
+                    label: 'Your wallet',
+                    value: formatWage(walletBalance),
+                  },
+                ]
+              : []),
           ]}
         />
         <WalletConnect />
@@ -418,6 +546,8 @@ export function RealtimeCityDashboard({
           agent={selectedAgent}
           currentJob={currentJob}
           sealedJobs={sealedJobs}
+          patronage={patronage}
+          canIdentify={!!userId}
           className="h-[520px] lg:h-full"
         />
 

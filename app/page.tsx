@@ -1,6 +1,13 @@
 import { createClient } from '@/lib/supabase/server';
 import { getInitialUserId } from '@/lib/identity/server';
-import { listAgents, listJobs, listRecentEvents } from '@/lib/supabase/queries';
+import {
+  getWageSplitTotals,
+  listAgents,
+  listJobs,
+  listPayoutsByStaker,
+  listRecentEvents,
+  listStakes,
+} from '@/lib/supabase/queries';
 import { RealtimeCityDashboard } from '@/components/realtime-city-dashboard';
 
 // Render awal saja -- setelah mount, RealtimeCityDashboard mendengar
@@ -10,12 +17,20 @@ export const revalidate = 0;
 export default async function Home() {
   const supabase = await createClient();
 
-  const [initialUserId, agentsRes, jobsRes, events] = await Promise.all([
-    getInitialUserId(),
-    listAgents(supabase),
-    listJobs(supabase),
-    listRecentEvents(supabase, 20),
-  ]);
+  const [initialUserId, agentsRes, jobsRes, events, stakes, totals] =
+    await Promise.all([
+      getInitialUserId(),
+      listAgents(supabase),
+      listJobs(supabase),
+      listRecentEvents(supabase, 20),
+      listStakes(supabase),
+      getWageSplitTotals(supabase),
+    ]);
+  // Feed pribadi "You earned ..." (mode simulasi: identitas sudah dikenal di server;
+  // mode wallet: hanya lewat Realtime setelah wallet terhubung).
+  const payouts = initialUserId
+    ? await listPayoutsByStaker(supabase, initialUserId, 10)
+    : [];
 
   const agents = agentsRes.data ?? [];
   const jobs = jobsRes.data ?? [];
@@ -26,13 +41,13 @@ export default async function Home() {
       initialAgents={agents.map((a) => ({
         id: a.id,
         name: a.name,
-        ticker: a.ticker,
+        code: a.code,
         district: a.district,
         rank: a.rank,
         isLead: a.is_lead,
         description: a.description,
-        holders: a.holders,
-        rating: Number(a.rating),
+        bondWage: Number(a.bond_wage ?? 0),
+        rating: a.rating == null ? null : Number(a.rating),
         jobsSealed: a.jobs_sealed,
         revenue30d: Number(a.revenue_30d),
       }))}
@@ -48,6 +63,9 @@ export default async function Home() {
         escrowTx: j.escrow_tx,
         rating: j.rating,
       }))}
+      initialStakes={stakes}
+      initialTotals={totals}
+      initialPayouts={payouts}
       initialEvents={events.map((e) => ({
         id: e.id,
         jobId: e.job_id,

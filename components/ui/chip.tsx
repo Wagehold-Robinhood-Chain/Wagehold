@@ -3,12 +3,12 @@ import { cn } from "@/lib/cn";
 
 interface ChipProps {
   children: ReactNode;
-  variant?: "default" | "rank" | "ticker";
+  variant?: "default" | "rank" | "sigil";
   className?: string;
 }
 
 export function Chip({ children, variant = "default", className }: ChipProps) {
-  if (variant === "ticker") {
+  if (variant === "sigil") {
     return (
       <span className={cn("font-mono text-xs text-gold", className)}>
         {children}

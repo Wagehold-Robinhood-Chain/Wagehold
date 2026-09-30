@@ -73,7 +73,7 @@ export function LoginForm() {
   return (
     <div className="flex flex-col gap-3 p-3.5">
       <p className="text-[12.5px] text-faint">
-        No password -- sign in with an account you already have.
+        No password. Sign in with an account you already have.
       </p>
 
       {PROVIDERS.map((p) => (

@@ -103,6 +103,36 @@ export async function POST(request: Request) {
   // Semua penulisan lewat service role (0005_harden_rls.sql).
   const admin = createServiceRoleClient();
 
+  // Hire langsung (opsional): client memilih satu bangunan (Wright). Harus ada, bukan
+  // Warden (Warden tidak mengerjakan job), dan berada di Ward yang sama dengan job.
+  let agentId: string | undefined;
+  if (body.agentId !== undefined && body.agentId !== null && body.agentId !== '') {
+    if (typeof body.agentId !== 'string' || !UUID_RE.test(body.agentId)) {
+      return NextResponse.json({ error: 'invalid agentId' }, { status: 400 });
+    }
+    const { data: hired } = await admin
+      .from('agents')
+      .select('id, district, is_lead')
+      .eq('id', body.agentId)
+      .single();
+    if (!hired) {
+      return NextResponse.json({ error: 'That building does not exist' }, { status: 400 });
+    }
+    if (hired.is_lead) {
+      return NextResponse.json(
+        { error: 'A Warden routes work but does not take jobs. Pick a Wright, or let the Warden choose.' },
+        { status: 400 },
+      );
+    }
+    if (hired.district !== body.district) {
+      return NextResponse.json(
+        { error: 'That building is not in the Ward you selected' },
+        { status: 400 },
+      );
+    }
+    agentId = hired.id;
+  }
+
   // Kalau escrow on-chain sudah dikonfigurasi, alur simulasi ditutup: job tanpa
   // wage yang benar-benar terkunci tidak boleh masuk (kalau tidak, siapa pun bisa
   // membuat job "berbayar" palsu yang lalu di-seal untuk mengkredit revenue agent).
@@ -203,6 +233,7 @@ export async function POST(request: Request) {
     brief,
     district: body.district,
     budgetUsdc,
+    agentId,
     escrowTx,
   });
 

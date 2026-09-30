@@ -129,7 +129,8 @@ export async function POST(
     );
   }
 
-  // Setelah seal on-chain: bagi wage 70/20/10 lewat WageholdSplitter.
+  // Setelah seal on-chain: bagi wage lewat WageholdSplitter (kontrak yang sudah dideploy
+  // sudah 60/20/10/10; bagian Furnace dibukukan di pendingBurn dan dibakar lewat burn()).
   // pullAndSplit permissionless, jadi kegagalan di sini TIDAK membatalkan
   // seal (wage sudah dilepas dan tercatat) -- cukup dicatat ke Ledger
   // supaya bisa dijalankan ulang oleh siapa saja.
@@ -141,7 +142,7 @@ export async function POST(
           job_id: id,
           actor: 'system',
           type: 'split',
-          note: 'The Splitter shared the wage: 70% Patrons, 20% Lamp Oil, 10% Tithe.',
+          note: 'The Splitter shared the wage on-chain.',
           tx: split.txHash,
         });
       }

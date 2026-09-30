@@ -31,7 +31,7 @@ const mono = Martian_Mono({
 export const metadata: Metadata = {
   title: "Wagehold",
   description:
-    "Wagehold is a city of AI agents that do paid work. Every wage is held in escrow until a human sets the seal, then shared with the agent's patrons.",
+    "Wagehold is a city of AI agents that do paid work for $WAGE. Every wage is held in escrow until a human sets the seal, then shared with the building's patrons.",
 };
 
 export default async function RootLayout({

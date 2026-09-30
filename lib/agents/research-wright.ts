@@ -1,4 +1,4 @@
-import { WAGE_SYMBOL } from '@/lib/currency';
+import { WAGE_UNIT } from '@/lib/currency';
 import { createServiceRoleClient } from '@/lib/supabase/server';
 import { callGemini } from '@/lib/agents/gemini';
 import type { Database } from '@/types/database';
@@ -11,12 +11,12 @@ type AgentRow = Database['public']['Tables']['agents']['Row'];
  *  (Warden) tetap dicatat sebagai yang me-route secara lore, tapi routing
  *  sungguhan antar Wright baru masuk Fase 3 item 5 -- untuk sekarang semua
  *  job Research Ward jatuh ke Deepdive. */
-const RESEARCH_WRIGHT_TICKER = 'DIVE';
+const RESEARCH_WRIGHT_CODE = 'DIVE';
 
 /** Dipakai kalau migrasi 0003 belum jalan dan agents.system_prompt masih
  *  kosong -- supaya fitur tetap jalan (dengan kualitas lebih rendah)
  *  daripada gagal total karena kolom belum terisi. */
-const FALLBACK_SYSTEM_PROMPT = `You are Deepdive ($DIVE), a Journeyman Wright of the Research Ward inside Wagehold, a walled city of AI workers. Write a clear, well-structured due diligence report for the brief given. Flag uncertainty instead of inventing facts, and never give buy/sell financial advice.`;
+const FALLBACK_SYSTEM_PROMPT = `You are Deepdive (DIVE), a Journeyman Wright of the Research Ward inside Wagehold, a walled city of AI workers. Write a clear, well-structured due diligence report for the brief given. Flag uncertainty instead of inventing facts, and never give buy/sell financial advice.`;
 
 const ACTIONABLE_STATUSES: JobRow['status'][] = ['open', 'working', 'revision'];
 
@@ -51,7 +51,7 @@ export async function runResearchJob(jobId: string): Promise<void> {
   const { data: agent } = await supabase
     .from('agents')
     .select('*')
-    .eq('ticker', RESEARCH_WRIGHT_TICKER)
+    .eq('code', RESEARCH_WRIGHT_CODE)
     .single();
 
   if (!agent) {
@@ -60,7 +60,7 @@ export async function runResearchJob(jobId: string): Promise<void> {
       jobId,
       'system',
       'error',
-      `Deepdive ($${RESEARCH_WRIGHT_TICKER}) is not in the roster -- run the seed migration first.`,
+      `Deepdive (${RESEARCH_WRIGHT_CODE}) is not in the roster -- run the seed migration first.`,
     );
     return;
   }
@@ -77,7 +77,7 @@ export async function runResearchJob(jobId: string): Promise<void> {
       jobId,
       agent.name,
       'assigned',
-      `The Research Ward sends this brief to ${agent.name} ($${agent.ticker}).`,
+      `The Research Ward sends this brief to ${agent.name} (${agent.code}).`,
     );
   } else {
     await supabase
@@ -141,7 +141,7 @@ function buildUserPrompt(
   job: Pick<JobRow, 'title' | 'brief' | 'budget_usdc'>,
   revisionNote: string | null,
 ): string {
-  let prompt = `Job title: ${job.title}\nBudget: ${job.budget_usdc} ${WAGE_SYMBOL}\n\nClient brief:\n${job.brief}`;
+  let prompt = `Job title: ${job.title}\nBudget: ${job.budget_usdc} ${WAGE_UNIT}\n\nClient brief:\n${job.brief}`;
   if (revisionNote) {
     prompt += `\n\nThe client sent this back with the following note. Revise your report to address it directly:\n${revisionNote}`;
   }

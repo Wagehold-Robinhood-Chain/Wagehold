@@ -53,7 +53,7 @@ createJob(1000 mUSDC) → setPayee(splitter) → registerJob(patronPool)
   → approve() [seal] → pullAndSplit() → patron.withdraw()
 
 Hasil akhir:
-  patron mUSDC balance       = 700_000000   (700 mUSDC = 70%)
+  patron mUSDC balance       = 700_000000   (700 mUSDC = 70%; REHEARSAL LAMA sebelum Revision 1 -- sekarang 600 = 60%)
   splitter pending[lampOil]  = 200_000000   (200 mUSDC = 20%, belum ditarik lampOil)
   splitter pending[tithe]    = 100_000000   (100 mUSDC = 10%, belum ditarik tithe)
   strongbox token balance    = 0            (semua wage sudah keluar dari escrow)

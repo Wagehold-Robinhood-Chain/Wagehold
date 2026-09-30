@@ -1,4 +1,4 @@
-import { WAGE_SYMBOL } from '@/lib/currency';
+import { WAGE_SPLIT, WAGE_UNIT } from '@/lib/currency';
 import Link from 'next/link';
 import { JobCard } from '@/components/job-card';
 import { RevenueSplit } from '@/components/revenue-split';
@@ -8,19 +8,21 @@ import { Chip } from '@/components/ui/chip';
 import { Button } from '@/components/ui/button';
 import { StatusPill } from '@/components/ui/status-pill';
 import { StatBar } from '@/components/stat-bar';
+import { BondLine, PatronageSection } from '@/components/patronage-section';
+import { formatWage, type PatronageSummary } from '@/lib/patronage';
 import { WARD_LABEL, RANK_LABEL } from '@/types/domain';
 import type { AgentDetail, JobSummary } from '@/types/domain';
-
-// Split tetap sesuai Charter Article VI/VII/VIII (lore file §6) -- bukan
-// per-agent, jadi tidak datang dari tabel agents.
-const FIXED_SPLIT = { patronsPct: 70, lampOilPct: 20, tithePct: 10 };
 
 export function AgentProfile({
   agent,
   sealedJobs,
+  patronage,
+  canIdentify,
 }: {
   agent: AgentDetail;
   sealedJobs: JobSummary[];
+  patronage: PatronageSummary;
+  canIdentify: boolean;
 }) {
   return (
     <div className="flex flex-col gap-3">
@@ -28,9 +30,15 @@ export function AgentProfile({
         <PanelHeader
           title={agent.name}
           action={
-            <Link href={`/jobs/new?district=${agent.district}`}>
+            <Link
+              href={
+                agent.isLead
+                  ? `/jobs/new?district=${agent.district}`
+                  : `/jobs/new?agent=${agent.id}`
+              }
+            >
               <Button variant="primary" size="small">
-                Hire ${agent.ticker}
+                Hire {agent.name}
               </Button>
             </Link>
           }
@@ -38,7 +46,7 @@ export function AgentProfile({
 
         <div className="flex flex-col gap-3 border-b border-line px-3.5 py-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Chip variant="ticker">${agent.ticker}</Chip>
+            <Chip variant="sigil">{agent.code}</Chip>
             <Chip>{WARD_LABEL[agent.district]}</Chip>
             <Chip variant="rank">
               {agent.isLead ? 'Warden' : RANK_LABEL[agent.rank]}
@@ -51,12 +59,19 @@ export function AgentProfile({
           <StatBar
             stats={[
               {
-                label: 'Revenue (30d)',
-                value: `${Math.round(agent.revenue30d).toLocaleString('en-US')} ${WAGE_SYMBOL}`,
+                label: 'Revenue 30d (gross wages)',
+                value: `${Math.round(agent.revenue30d).toLocaleString('en-US')} ${WAGE_UNIT}`,
                 gold: true,
               },
-              { label: 'Patrons', value: String(agent.holders) },
-              { label: 'Rating', value: agent.rating.toFixed(1) },
+              {
+                label: 'Staked by patrons',
+                value: formatWage(agent.stakedWage),
+              },
+              { label: 'Patrons', value: String(agent.stakerCount) },
+              {
+                label: 'Rating',
+                value: agent.rating != null ? agent.rating.toFixed(1) : 'No ratings yet',
+              },
               { label: 'Sealed jobs', value: String(agent.jobsSealed) },
             ]}
           />
@@ -64,9 +79,26 @@ export function AgentProfile({
 
         <div className="flex flex-col gap-2 px-3.5 py-3">
           <h3 className="text-[11px] uppercase tracking-wider text-faint">
-            Wage split (escrow release)
+            Where each wage goes (on seal)
           </h3>
-          <RevenueSplit data={FIXED_SPLIT} />
+          <RevenueSplit data={WAGE_SPLIT} />
+        </div>
+
+        <div className="flex flex-col gap-2 border-t border-line px-3.5 py-3">
+          <h3 className="text-[11px] uppercase tracking-wider text-faint">
+            Patronage
+          </h3>
+          <PatronageSection
+            agentId={agent.id}
+            isLead={agent.isLead}
+            stakedWage={patronage.stakedWage}
+            stakerCount={patronage.stakerCount}
+            myStake={patronage.myStake}
+            myEarned={patronage.myEarned}
+            mySharePct={patronage.mySharePct}
+            canIdentify={canIdentify}
+          />
+          <BondLine bondWage={agent.bondWage} />
         </div>
       </Panel>
 

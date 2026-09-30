@@ -10,7 +10,7 @@
  * private key, karena dua file itu memanggil wagmi/AppKit yang butuh browser + wallet.
  *
  * Pakai:
- *   npx tsx scripts/e2e-testnet.ts --mode splitter   # Strongbox + Splitter 70/20/10 (+ refund, dispute)
+ *   npx tsx scripts/e2e-testnet.ts --mode splitter   # Strongbox + Splitter 60/20/10/10 (+ refund, dispute)
  *   npx tsx scripts/e2e-testnet.ts --mode direct     # tanpa Splitter, wage penuh ke wallet Wright
  *   opsional: --with-finding   jalankan skenario S5 (dispute + Splitter) -- MENCEMARI Splitter
  *                              yang dipakai, jangan di Splitter testnet bersama (lihat E2E_TESTNET.md)
@@ -78,6 +78,9 @@ const splitterExtraAbi = parseAbi([
   "function withdraw()",
   "function pendingWithdrawals(address) view returns (uint256)",
   "function lampOilTreasury() view returns (address)",
+  "function pendingBurn() view returns (uint256)",
+  "function totalBurned() view returns (uint256)",
+  "function burn()",
   "function titheTreasury() view returns (address)",
   "function council() view returns (address)",
   "error NotCouncil()",
@@ -359,7 +362,7 @@ async function main() {
     }
   }
 
-  // ---- S1: siklus penuh dengan Splitter (70/20/10)
+  // ---- S1: siklus penuh dengan Splitter (60/20/10/10)
   async function S1() {
     const uuid = randomUUID();
     const jobId = computeJobId(uuid);
@@ -409,10 +412,12 @@ async function main() {
 
     // snapshot ledger Splitter sebelum split
     const dests: Array<[string, Address, bigint]> = [
-      ["Patron pool (Wright)", wrightAccount.address, (amount * BigInt(70)) / BigInt(100)],
+      ["Patron pool (Wright)", wrightAccount.address, (amount * BigInt(60)) / BigInt(100)],
       ["Lamp Oil", lampOil!, (amount * BigInt(20)) / BigInt(100)],
-      ["Tithe", tithe!, amount - (amount * BigInt(70)) / BigInt(100) - (amount * BigInt(20)) / BigInt(100)],
+      ["Tithe", tithe!, amount - (amount * BigInt(60)) / BigInt(100) - (amount * BigInt(20)) / BigInt(100) - (amount * BigInt(10)) / BigInt(100)],
     ];
+    const furnace = (amount * BigInt(10)) / BigInt(100);
+    const burnBefore = (await pub.readContract({ address: splitter!, abi: SP, functionName: "pendingBurn" })) as bigint;
     const uniq = [...new Set(dests.map(([, a]) => a.toLowerCase()))] as Address[];
     const before = new Map(await Promise.all(uniq.map(async (a) => [a, await spPending(a)] as const)));
     const spTokenBefore = await bal(splitter!);
@@ -441,7 +446,9 @@ async function main() {
       assertEq(`ledger Splitter: ${label}`, delta, want, { detail: `+${fmt(delta)}${want !== v2 ? ` (alamat dipakai bersama, total ${fmt(want)})` : ""}` });
     }
     const sum = dests.reduce((s, d) => s + d[2], BigInt(0));
-    assertEq("70+20+10 = wage (tanpa dust hilang)", sum, amount);
+    const burnAfter = (await pub.readContract({ address: splitter!, abi: SP, functionName: "pendingBurn" })) as bigint;
+    assertEq("Furnace dibukukan 10% di pendingBurn", burnAfter - burnBefore, furnace, { detail: fmt(furnace) });
+    assertEq("60+20+10+10 = wage (tanpa dust hilang)", sum + furnace, amount);
     assertEq("Strongbox kosong untuk job ini (token keluar penuh)", (await bal(strongbox)) - sbBalance0, BigInt(0), { detail: "delta 0" });
     assertEq("token pindah ke Splitter sebesar wage", (await bal(splitter!)) - spTokenBefore, amount, { detail: fmt(amount) });
 
@@ -588,7 +595,7 @@ async function main() {
         status: "finding",
         detail: `kredit ${fmt(credited)} vs saldo masuk ${fmt(backed)} → kekurangan ${fmt(credited - backed)}`,
       });
-      // Dampak nyata: coba tarik jatah Patron (70% dari 100 = 70) dari saldo Splitter.
+      // Dampak nyata: coba tarik jatah Patron (60% dari 100 = 60) dari saldo Splitter.
       const patronPending = await spPending(wrightAccount.address);
       const spTok = await bal(splitter!);
       try {
@@ -610,7 +617,7 @@ async function main() {
   }
 
   if (MODE === "splitter") {
-    await scenario("S1  siklus penuh + Splitter 70/20/10", S1);
+    await scenario("S1  siklus penuh + Splitter 60/20/10/10", S1);
     await scenario("S3  refund sebelum ada payee", S3);
     await scenario("S4  dispute + resolveDispute", S4);
     if (WITH_FINDING) await scenario("S5  dispute parsial + Splitter (opt-in)", S5);

@@ -1,12 +1,16 @@
 'use client';
 
-import { WAGE_SYMBOL } from '@/lib/currency';
+import { WAGE_TOKEN } from '@/lib/currency';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import { useAccount } from 'wagmi';
 import { ConnectWalletLink } from '@/components/wallet-connect';
-import { PostJobForm, type PostJobValues } from '@/components/post-job-form';
+import {
+  PostJobForm,
+  type PostJobBuilding,
+  type PostJobValues,
+} from '@/components/post-job-form';
 import { lockWageOnChain } from '@/lib/web3/lock-wage';
 import { isOnChainEscrowConfigured } from '@/lib/web3/strongbox';
 import { SUPPORTED_CHAIN_IDS } from '@/lib/web3/chains';
@@ -30,8 +34,12 @@ interface PendingLock {
  *  job otomatis jadi milik browser ini (cookie `wh_sim`, lib/identity/sim-id.ts). */
 export function PostJobClient({
   initialDistrict,
+  initialAgentId,
+  buildings,
 }: {
   initialDistrict?: DistrictId;
+  initialAgentId?: string;
+  buildings: PostJobBuilding[];
 }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
@@ -72,7 +80,7 @@ export function PostJobClient({
 
         try {
           id = crypto.randomUUID();
-          setSubmittingLabel(`Approving ${WAGE_SYMBOL}…`);
+          setSubmittingLabel(`Approving ${WAGE_TOKEN}…`);
           const result = await lockWageOnChain(id, values.budgetUsdc);
           escrowTx = result.txHash;
           setPendingLock({ id, escrowTx, budgetUsdc: values.budgetUsdc });
@@ -124,6 +132,8 @@ export function PostJobClient({
         submitting={submitting}
         submittingLabel={submittingLabel}
         initialDistrict={initialDistrict}
+        initialAgentId={initialAgentId}
+        buildings={buildings}
       />
       <AnimatePresence>
         {error && (

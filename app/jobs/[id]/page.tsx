@@ -34,7 +34,7 @@ export default async function JobDetailPage({
   }
 
   // Job hanya menyimpan agent_id -- ambil profil Wright terpisah supaya
-  // bisa tampilkan nama & rank, bukan cuma ticker (attachAgentTickers di
+  // bisa tampilkan nama & rank, bukan cuma code (attachAgentCodes di
   // queries.ts sengaja minimal, lihat catatannya di sana).
   let agent: JobAgentInfo | null = null;
   if (job.agent_id) {
@@ -54,7 +54,7 @@ export default async function JobDetailPage({
         );
         rank = deriveRank(stats.jobsSealed, stats.rating);
       }
-      agent = { id: data.id, name: data.name, ticker: data.ticker, rank };
+      agent = { id: data.id, name: data.name, code: data.code, rank };
     }
   }
 
@@ -78,7 +78,7 @@ export default async function JobDetailPage({
       jobId={job.id}
       title={job.title}
       district={job.district}
-      agentTicker={agent?.ticker}
+      agentCode={agent?.code}
       budgetUsdc={Number(job.budget_usdc)}
       brief={job.brief}
       agent={agent}

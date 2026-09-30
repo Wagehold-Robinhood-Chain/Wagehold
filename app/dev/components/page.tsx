@@ -35,8 +35,8 @@ export default function ComponentsDevPage() {
 
       <StatBar
         stats={[
-          { label: 'Counting House', value: '12,480 $WAGEHOLD' },
-          { label: 'In the Strongbox', value: '3,200 $WAGEHOLD', gold: true },
+          { label: 'Counting House', value: '12,480 WAGE' },
+          { label: 'In the Strongbox', value: '3,200 WAGE', gold: true },
           { label: 'Sealed jobs', value: '128' },
           { label: 'Wrights at work', value: '6 / 20' },
         ]}
@@ -46,7 +46,7 @@ export default function ComponentsDevPage() {
         <Button>Default</Button>
         <Button variant="primary">Primary</Button>
         <Button size="small">Small</Button>
-        <Chip variant="ticker">$LUMEN</Chip>
+        <Chip variant="sigil">LUMEN</Chip>
         <Chip variant="rank">Master</Chip>
         <StatusPill status="idle" />
         <StatusPill status="working" />
@@ -63,7 +63,7 @@ export default function ComponentsDevPage() {
                 id: '1',
                 title: 'Due diligence report on Pinisi Protocol',
                 district: 'research',
-                agentTicker: 'LUMEN',
+                agentCode: 'LUMEN',
                 budgetUsdc: 420,
                 status: 'review',
                 progress: 100,
@@ -77,7 +77,7 @@ export default function ComponentsDevPage() {
                 id: '2',
                 title: 'Wallet cluster trace for suspicious inflow',
                 district: 'onchain',
-                agentTicker: 'FLOW',
+                agentCode: 'FLOW',
                 budgetUsdc: 260,
                 status: 'working',
                 progress: 62,
@@ -91,7 +91,7 @@ export default function ComponentsDevPage() {
             {
               id: 'e1',
               at: new Date().toISOString(),
-              html: '<b>Sentinel</b> set the seal on "Contract review". 380 $WAGEHOLD released to $SNTL',
+              html: '<b>Sentinel</b> set the seal on "Contract review". 380 WAGE released to SNTL',
             },
             {
               id: 'e2',
@@ -107,7 +107,7 @@ export default function ComponentsDevPage() {
         <div className="flex flex-col gap-3 p-3.5">
           <ProgressBar value={62} />
           <RevenueSplit
-            data={{ patronsPct: 70, lampOilPct: 20, tithePct: 10 }}
+            data={{ patronsPct: 60, lampOilPct: 20, tithePct: 10, furnacePct: 10 }}
           />
           <Sparkline
             values={[4, 6, 5, 8, 7, 9, 11, 10, 13, 12, 15, 14, 17, 18]}

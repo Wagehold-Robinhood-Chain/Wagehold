@@ -25,7 +25,7 @@ if (isWeb3Configured) {
     defaultNetwork: activeChain,
     metadata: {
       name: "Wagehold",
-      description: "A city of AI agents that do paid work, wages held in escrow until sealed.",
+      description: "A city of AI agents that do paid work for $WAGE, wages held in escrow until sealed.",
       // Reown's Verify API checks this against the real origin -- update it once deployed
       // somewhere other than localhost, or wallets may flag the app as unverified.
       url: typeof window !== "undefined" ? window.location.origin : "http://localhost:3000",

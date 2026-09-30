@@ -24,7 +24,7 @@ export function RealtimeJobDetail({
   jobId,
   title,
   district,
-  agentTicker,
+  agentCode,
   budgetUsdc,
   brief,
   agent,
@@ -39,7 +39,7 @@ export function RealtimeJobDetail({
   jobId: string;
   title: string;
   district: DistrictId;
-  agentTicker?: string;
+  agentCode?: string;
   budgetUsdc: number;
   brief: string;
   agent: JobAgentInfo | null;
@@ -101,7 +101,7 @@ export function RealtimeJobDetail({
     id: jobId,
     title,
     district,
-    agentTicker,
+    agentCode,
     budgetUsdc,
     status,
     progress,

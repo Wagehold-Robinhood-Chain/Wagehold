@@ -130,7 +130,7 @@ export function JobBoard({
   return (
     <Panel className="h-full">
       <PanelHeader
-        title="Job Board"
+        title="Your jobs"
         action={
           <Link href="/jobs/new">
             <Button variant="primary" size="small">

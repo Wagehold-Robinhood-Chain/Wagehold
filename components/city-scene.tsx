@@ -17,7 +17,7 @@ import {
 // tidak perlu diubah.
 export interface CityAgent {
   id: string;
-  ticker: string;
+  code: string;
   district: DistrictId;
   revenue30d: number;
   status: AgentStatus;
@@ -31,7 +31,9 @@ const BUILDING_OFFSETS: [number, number][] = [
   [-1.9, 1.9],
   [1.9, 1.9],
 ];
-const heightFor = (revenue30d: number) => 1.2 + revenue30d / 1500;
+// Revenue = wage kotor (Revision 1); pembagi 1500 -> 2150 (=1500/0.7) supaya tinggi gedung
+// tetap sama seperti saat revenue masih porsi patron 70%.
+const heightFor = (revenue30d: number) => 1.2 + revenue30d / 2150;
 
 const DRAG_RAD_PER_PX = 0.008;
 const INERTIA_S = 0.4; // seberapa cepat putaran meredam setelah drag dilepas
@@ -121,7 +123,7 @@ function plazaCanvas(colors: string[]) {
 
 // Label HTML di atas canvas. Gaya di-inline (bukan kelas Tailwind) karena
 // elemennya dibuat lewat DOM API di luar React, jadi tidak ikut discan Tailwind.
-// Palet terang: pil putih untuk ticker, papan berwarna Ward untuk nama Ward.
+// Palet terang: pil putih untuk code, papan berwarna Ward untuk nama Ward.
 const INK = '#2b3257';
 
 // Naikkan saturasi & normalkan kecerahan supaya warna Ward terlihat hidup
@@ -628,7 +630,7 @@ export function CityScene({
         roofDeco.visible = false;
         scene.add(roofDeco);
 
-        const label = makeLabel('bld', '$' + agent.ticker);
+        const label = makeLabel('bld', agent.code);
         labelsEl.appendChild(label);
 
         const h = heightFor(agent.revenue30d);

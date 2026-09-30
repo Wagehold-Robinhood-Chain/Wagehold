@@ -1,14 +1,23 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { JobDetail, type JobDetailEvent, type JobAgentInfo } from "@/components/job-detail";
-import { SiteNav } from "@/components/site-nav";
-import { WalletConnect } from "@/components/wallet-connect";
-import { useRealtimeChanges } from "@/lib/supabase/realtime";
-import { useIdentity } from "@/lib/identity/use-identity";
-import { isWalletMode } from "@/lib/identity/mode";
-import type { DistrictId, JobStatus, JobSummary } from "@/types/domain";
-import { MotionPage, MotionHeader, MotionFooter } from "@/components/motion/primitives";
+import { useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  JobDetail,
+  type JobDetailEvent,
+  type JobAgentInfo,
+} from '@/components/job-detail';
+import { SiteNav } from '@/components/site-nav';
+import { WalletConnect } from '@/components/wallet-connect';
+import { useRealtimeChanges } from '@/lib/supabase/realtime';
+import { useIdentity } from '@/lib/identity/use-identity';
+import { isWalletMode } from '@/lib/identity/mode';
+import type { DistrictId, JobStatus, JobSummary } from '@/types/domain';
+import {
+  MotionPage,
+  MotionHeader,
+  MotionFooter,
+} from '@/components/motion/primitives';
 
 /**
  * Item 11 (Realtime Ledger Wall): halaman Job Detail sekarang mendengar
@@ -56,23 +65,34 @@ export function RealtimeJobDetail({
   const [deliverable, setDeliverable] = useState(initialDeliverable);
   const [events, setEvents] = useState(initialEvents);
   const userId = useIdentity(initialUserId);
+  const router = useRouter();
+  // Wright baru ditugaskan Warden SETELAH halaman ini terbuka (Post a job langsung
+  // redirect ke sini). Nama/kode/rank Wright datang dari render server, bukan dari
+  // payload Realtime -- jadi begitu agent_id berubah, minta server render ulang.
+  // Tanpa ini kartu Job tidak punya kode Wright, sehingga kotak rating tidak muncul
+  // dan panel Wright hilang sampai halaman di-refresh manual.
+  const agentIdRef = useRef<string | null>(agent?.id ?? null);
 
   useRealtimeChanges(
-    "jobs",
+    'jobs',
     (payload) => {
-      if (payload.eventType === "DELETE") return;
+      if (payload.eventType === 'DELETE') return;
       const row = payload.new;
       setStatus(row.status);
       setProgress(row.progress);
       setDeliverable(row.deliverable);
+      if (row.agent_id && row.agent_id !== agentIdRef.current) {
+        agentIdRef.current = row.agent_id;
+        router.refresh();
+      }
     },
-    `id=eq.${jobId}`
+    `id=eq.${jobId}`,
   );
 
   useRealtimeChanges(
-    "job_events",
+    'job_events',
     (payload) => {
-      if (payload.eventType !== "INSERT") return; // event tidak pernah di-update/dihapus
+      if (payload.eventType !== 'INSERT') return; // event tidak pernah di-update/dihapus
       const row = payload.new;
       setEvents((prev) => {
         if (prev.some((e) => e.id === row.id)) return prev; // guard kalau event yang sama masuk dobel
@@ -86,15 +106,15 @@ export function RealtimeJobDetail({
             // Diformat di browser -- baris ini tidak pernah ikut SSR
             // (baru muncul lewat WebSocket), jadi tidak ada risiko
             // hydration mismatch seperti events awal dari server.
-            atLabel: new Date(row.at).toLocaleString("en-US", {
-              dateStyle: "medium",
-              timeStyle: "short",
+            atLabel: new Date(row.at).toLocaleString('en-US', {
+              dateStyle: 'medium',
+              timeStyle: 'short',
             }),
           },
         ];
       });
     },
-    `job_id=eq.${jobId}`
+    `job_id=eq.${jobId}`,
   );
 
   const summary: JobSummary = {
@@ -111,14 +131,18 @@ export function RealtimeJobDetail({
   return (
     <MotionPage className="flex h-screen flex-col gap-3 p-3">
       <MotionHeader className="flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-xl font-bold tracking-tight">Wagehold</h1>
+        <h1 className="font-display text-xl font-bold tracking-tight">
+          Wagehold
+        </h1>
         <SiteNav />
-        <p className="text-[13px] italic text-muted">Work sealed. Wages shared.</p>
+        <p className="text-[13px] italic text-muted">
+          Work sealed. Wages shared.
+        </p>
         <WalletConnect />
       </MotionHeader>
 
       <div className="flex flex-1 justify-center overflow-auto py-2">
-        <div className="w-full max-w-xl">
+        <div className="w-full max-w-6xl">
           <JobDetail
             job={summary}
             brief={brief}

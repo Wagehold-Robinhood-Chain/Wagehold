@@ -9,7 +9,9 @@ import { Panel, PanelHeader, PanelScroll } from '@/components/ui/panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Chip } from '@/components/ui/chip';
 import { ProgressBar } from '@/components/ui/progress-bar';
-import { RANK_LABEL } from '@/types/domain';
+import { Button } from '@/components/ui/button';
+import { RANK_LABEL, WARD_LABEL } from '@/types/domain';
+import { buildContinueDraft, saveContinueDraft } from '@/lib/continue-job';
 import { activeChain } from '@/lib/web3/chains';
 import { sendBack, setTheSeal } from '@/lib/web3/set-the-seal';
 import { ConnectWalletLink } from '@/components/wallet-connect';
@@ -45,10 +47,16 @@ const STAGES = [
 
 /** Info kerja agent selama job belum siap di-seal: tahap yang sedang jalan
  *  (diturunkan dari progress yang naik live lewat Realtime). */
-function WorkProgress({ job }: { job: JobSummary }) {
+function WorkProgress({
+  job,
+  className,
+}: {
+  job: JobSummary;
+  className?: string;
+}) {
   const waiting = job.status === 'open';
   return (
-    <Panel>
+    <Panel className={className}>
       <PanelHeader title="Work in progress" />
       <div className="flex flex-col gap-2.5 px-3.5 py-3">
         <p className="text-[12.5px] text-muted">
@@ -143,13 +151,29 @@ export function JobDetail({
     }
   }
 
+  // Lanjut ke Ward/Wright lain = job BARU (upah dan penilaian terpisah per Wright).
+  // Draft brief dititipkan lewat sessionStorage (isi report bisa panjang untuk URL)
+  // dan diambil form di /jobs/new.
+  function continueInAnotherWard() {
+    if (!deliverable) return;
+    saveContinueDraft(
+      buildContinueDraft({
+        title: job.title,
+        wardLabel: WARD_LABEL[job.district],
+        agentCode: job.agentCode,
+        deliverable,
+      }),
+    );
+    router.push('/jobs/new');
+  }
+
   // Job yang sudah di-seal terlihat di daftar oleh semua orang, tapi isinya
   // (brief, deliverable, ledger, escrow) hanya untuk client yang membuatnya.
   const locked = job.status === 'paid' && !isOwnJob;
 
   if (locked) {
     return (
-      <div className="flex flex-col gap-3">
+      <div className="mx-auto flex w-full max-w-xl flex-col gap-3">
         <Panel>
           <PanelHeader title="Job" />
           <JobCard job={job} linkToDetail={false} locked />
@@ -180,10 +204,28 @@ export function JobDetail({
     );
   }
 
+  // Layar lebar: Deliverable & Job masing-masing dikunci setinggi PANEL_H, isi yang
+  // panjang di-scroll di dalam panel. `shrink-0` wajib: induknya flex-col di dalam
+  // area yang tingginya terbatas, jadi tanpa itu panel ikut mengecil ketika Ledger
+  // bertambah (mis. setelah seal) dan tingginya jadi tidak sama lagi.
+  const PANEL_H = 'lg:h-[32rem] lg:shrink-0';
   const deliverablePanel = deliverable ? (
-    <Panel>
-      <PanelHeader title="Deliverable" />
-      <PanelScroll className="max-h-96">
+    <Panel className={PANEL_H}>
+      <PanelHeader
+        title="Deliverable"
+        action={
+          isOwnJob ? (
+            <Button
+              size="small"
+              onClick={continueInAnotherWard}
+              title="Start a new job in any Ward, pre-filled with this report and its open questions"
+            >
+              Continue in another Ward →
+            </Button>
+          ) : undefined
+        }
+      />
+      <PanelScroll className="max-h-96 lg:max-h-none">
         <p className="whitespace-pre-wrap px-3.5 py-3 text-[13px] text-muted">
           {deliverable}
         </p>
@@ -191,13 +233,17 @@ export function JobDetail({
     </Panel>
   ) : null;
 
-  return (
-    <div className="flex flex-col gap-3">
-      {/* Saat review: hasil kerja tampil DULU, baru gerbang seal di bawahnya. */}
-      {job.status === 'review' && deliverablePanel}
+  const showProgress = job.status === 'open' || job.status === 'working';
 
-      <Panel>
-        <PanelHeader title="Job" />
+  // Selama Wright bekerja (open / working) belum ada Deliverable, jadi baris atas
+  // = Job (kiri) + Work in progress (kanan) dengan lebar yang sama (2 kolom 1:1).
+  // Grid meregangkan kedua panel ke tinggi yang sama (mengikuti yang tertinggi).
+  const sideBySide = !deliverablePanel && showProgress;
+
+  const jobPanel = (
+    <Panel className={deliverablePanel ? PANEL_H : undefined}>
+      <PanelHeader title="Job" />
+      <PanelScroll className="lg:max-h-none">
         <JobCard
           job={job}
           isOwnJob={isOwnJob}
@@ -207,6 +253,7 @@ export function JobDetail({
           linkToDetail={false}
           onSetSeal={(rating) => callAction('approve', rating)}
           onSendBack={(note) => callAction('revise', note)}
+          deliverable={deliverable}
         />
 
         {needsWallet && job.status === 'review' && (
@@ -254,15 +301,47 @@ export function JobDetail({
             </Link>
           </div>
         )}
-      </Panel>
+      </PanelScroll>
+    </Panel>
+  );
 
-      {(job.status === 'open' || job.status === 'working') && (
-        <WorkProgress job={job} />
+  // Layout (layar lebar):
+  //  - Ada Deliverable (review / paid): baris atas = Deliverable (kiri) + Job (kanan).
+  //  - Wright bekerja (open / working): baris atas = Job (kiri) + Work in progress
+  //    (kanan), ukuran sama.
+  //  - Lainnya: Job saja, satu kolom di tengah.
+  // Ledger selalu memanjang selebar baris atas di bawahnya. Di layar sempit semuanya
+  // ditumpuk, dan saat status review Deliverable tetap di atas Job supaya hasil kerja
+  // dibaca dulu sebelum gerbang seal.
+  return (
+    <div
+      className={
+        deliverablePanel || sideBySide
+          ? 'flex shrink-0 flex-col gap-3'
+          : 'mx-auto flex w-full max-w-xl shrink-0 flex-col gap-3'
+      }
+    >
+      {sideBySide ? (
+        <div className="grid shrink-0 grid-cols-1 gap-3 lg:grid-cols-2 lg:items-stretch">
+          {jobPanel}
+          <WorkProgress job={job} />
+        </div>
+      ) : (
+        <div
+          className={
+            deliverablePanel
+              ? 'grid shrink-0 gap-3 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-start'
+              : 'flex shrink-0 flex-col gap-3'
+          }
+        >
+          {deliverablePanel && (
+            <div className="min-w-0">{deliverablePanel}</div>
+          )}
+          <div className="flex min-w-0 flex-col gap-3">{jobPanel}</div>
+        </div>
       )}
 
-      {job.status !== 'review' && deliverablePanel}
-
-      <Panel>
+      <Panel className="shrink-0">
         <PanelHeader title="Ledger" />
         <PanelScroll className="max-h-72">
           {events.length === 0 ? (

@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { WARD_LABEL } from '@/types/domain';
 import { WAGE_SPLIT, WAGE_TOKEN } from '@/lib/currency';
 import { isOnChainEscrowConfigured } from '@/lib/web3/strongbox';
+import { takeContinueDraft } from '@/lib/continue-job';
 import type { DistrictId } from '@/types/domain';
 
 export interface PostJobValues {
@@ -54,9 +55,26 @@ export function PostJobForm({
   );
   const [budget, setBudget] = useState('');
   const [agentId, setAgentId] = useState<string>(
-    buildings.some((b) => b.id === initialAgentId) ? (initialAgentId ?? '') : '',
+    buildings.some((b) => b.id === initialAgentId)
+      ? (initialAgentId ?? '')
+      : '',
   );
+  // Datang dari "Continue in another Ward" di halaman job: judul + brief terisi dari
+  // job sebelumnya (draft sekali pakai di sessionStorage). Hanya mengisi kolom yang
+  // masih kosong. Dibaca setelah mount -- sessionStorage tidak ada saat SSR.
+  const [continueFrom, setContinueFrom] = useState<string | null>(null);
+  useEffect(() => {
+    const draft = takeContinueDraft();
+    if (!draft) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTitle((t) => t || draft.title);
+    setBrief((b) => b || draft.brief);
+    setContinueFrom(draft.fromLabel);
+  }, []);
   const chosen = buildings.find((b) => b.id === agentId);
+  // Building yang ditawarkan hanya milik Ward yang sedang dipilih.
+  const activeWard = chosen ? chosen.district : district;
+  const wardBuildings = buildings.filter((b) => b.district === activeWard);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -81,6 +99,15 @@ export function PostJobForm({
       onSubmit={handleSubmit}
       className="grid grid-cols-1 gap-2 border-b border-line bg-surface-2 p-3.5 sm:grid-cols-2"
     >
+      {continueFrom && (
+        <p className="col-span-full rounded-md border border-gold/40 bg-gold/[0.07] px-2.5 py-2 text-[11.5px] text-muted">
+          Continuing from {continueFrom}. Write what you want next under
+          &ldquo;What I want next&rdquo;, then pick the Ward that should take
+          it. This is a new job with its own wage; the earlier job is not
+          affected.
+        </p>
+      )}
+
       <label className={`${labelClass} col-span-full`}>
         Job title
         <input
@@ -132,19 +159,11 @@ export function PostJobForm({
             onChange={(e) => setAgentId(e.target.value)}
           >
             <option value="">Let the Ward&apos;s Warden choose</option>
-            {Object.entries(WARD_LABEL).map(([wardId, wardLabel]) => {
-              const inWard = buildings.filter((b) => b.district === wardId);
-              if (inWard.length === 0) return null;
-              return (
-                <optgroup key={wardId} label={wardLabel}>
-                  {inWard.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} · {b.code}
-                    </option>
-                  ))}
-                </optgroup>
-              );
-            })}
+            {wardBuildings.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name} · {b.code}
+              </option>
+            ))}
           </select>
           <span className="text-[11px] text-faint">
             {`Optional. Pick a building to hire it directly; its patrons share the ${WAGE_SPLIT.patronsPct}% patron cut when you set the seal.`}
@@ -166,9 +185,9 @@ export function PostJobForm({
       </label>
 
       <p className="col-span-full text-[11.5px] text-faint">
-        Priced and paid in {WAGE_TOKEN}. On seal: {WAGE_SPLIT.patronsPct}% patrons ·{' '}
-        {WAGE_SPLIT.lampOilPct}% Lamp Oil · {WAGE_SPLIT.tithePct}% tithe ·{' '}
-        {WAGE_SPLIT.furnacePct}% burned.
+        Priced and paid in {WAGE_TOKEN}. On seal: {WAGE_SPLIT.patronsPct}%
+        patrons · {WAGE_SPLIT.lampOilPct}% Lamp Oil · {WAGE_SPLIT.tithePct}%
+        tithe · {WAGE_SPLIT.furnacePct}% burned.
       </p>
 
       {!isOnChainEscrowConfigured && (

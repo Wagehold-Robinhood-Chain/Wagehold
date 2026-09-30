@@ -165,7 +165,7 @@ export function JobCard({
           >
             <p className="text-[11.5px] text-warn">
               The Wright has delivered. Read the deliverable, rate the work (★)
-              — required — then set the seal.
+              required then set the seal.
             </p>
             <Link href={`/jobs/${job.id}#seal`} className="w-fit">
               <Button variant="primary" size="small">

@@ -27,7 +27,7 @@ export const WAGE_UNIT = "WAGE";
  * Dipakai untuk tampilan dan catatan feed. Revenue Wright sekarang wage KOTOR (lihat
  * lib/agent-stats.ts), jadi tidak lagi bergantung pada porsi patron. CATATAN: kontrak
  * WageholdSplitter membagi 60/20/10/10 (PATRON_BPS/LAMP_OIL_BPS/TITHE_BPS/FURNACE_BPS), sama dengan
- * konstanta ini. Kontrak lama (70/20/10) HARUS di-redeploy; Furnace dibukukan lalu dibakar lewat burn().
+ * konstanta ini. Kontrak lama (70/20/10) HARUS di-redeploy; Furnace dibakar otomatis di pullAndSplit.
  */
 export const WAGE_SPLIT: RevenueSplitData = {
   patronsPct: 60,

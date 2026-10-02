@@ -74,6 +74,12 @@ contract WageholdStrongbox is ReentrancyGuard {
     /// only place tokens actually leave the contract to an external address.
     mapping(address => uint256) public pendingWithdrawals;
 
+    /// @notice What a job actually credited to its payee: the full wage on `approve`, only the
+    /// payee's share on `resolveDispute` (0 on a full refund). `WageholdSplitter` splits THIS
+    /// amount, never the original wage, so a partial dispute can't make it credit more than it
+    /// receives (finding S5). Meaningful once `status == Released`; 0 before that.
+    mapping(bytes32 => uint256) private _releasedToPayee;
+
     event JobFunded(bytes32 indexed jobId, address indexed client, uint256 amount);
     event PayeeSet(bytes32 indexed jobId, address indexed payee);
     event SealSet(bytes32 indexed jobId, address indexed payee, uint256 amount);
@@ -151,6 +157,7 @@ contract WageholdStrongbox is ReentrancyGuard {
         if (job.payee == address(0)) revert PayeeNotSet();
 
         job.status = Status.Released;
+        _releasedToPayee[jobId] = job.amount;
         pendingWithdrawals[job.payee] += job.amount;
 
         emit SealSet(jobId, job.payee, job.amount);
@@ -214,6 +221,7 @@ contract WageholdStrongbox is ReentrancyGuard {
         if (payeeAmount + refundAmount != job.amount) revert SplitMismatch();
 
         job.status = Status.Released;
+        _releasedToPayee[jobId] = payeeAmount;
         if (payeeAmount > 0) pendingWithdrawals[job.payee] += payeeAmount;
         if (refundAmount > 0) pendingWithdrawals[job.client] += refundAmount;
 
@@ -256,6 +264,11 @@ contract WageholdStrongbox is ReentrancyGuard {
     // ---------------------------------------------------------------------
     // Views
     // ---------------------------------------------------------------------
+
+    /// @notice Amount credited to the job's payee when it was released (see `_releasedToPayee`).
+    function releasedToPayee(bytes32 jobId) external view returns (uint256) {
+        return _releasedToPayee[jobId];
+    }
 
     function getJob(bytes32 jobId) external view returns (Job memory) {
         return _jobs[jobId];

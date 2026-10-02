@@ -181,7 +181,7 @@ export type SplitResult =
 /**
  * After the client's seal: calls `WageholdSplitter.pullAndSplit(jobId)`,
  * which pulls the released wage out of the Strongbox and credits Patrons /
- * Lamp Oil / Tithe 60/20/10 and books the 10% Furnace share (each destination then withdraws for itself; anyone can call burn()).
+ * Lamp Oil / Tithe 60/20/10 and burns the 10% Furnace share in the same transaction (each destination then withdraws for itself).
  * `pullAndSplit` is permissionless -- the council key is only used here as a
  * funded account to send it, so a failure is never fatal: anyone can call it
  * later, and the caller records a "split pending" event instead.

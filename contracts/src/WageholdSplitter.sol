@@ -28,7 +28,8 @@ import {WageholdStrongbox} from "./WageholdStrongbox.sol";
 ///   4. Anyone calls `splitter.pullAndSplit(jobId)` -- pulls from the Strongbox if needed and
 ///      credits Patrons / Lamp Oil / Tithe here, each by pull-payment, and books the Furnace share.
 ///   5. Each of the three destinations calls `splitter.withdraw()` on their own behalf.
-///   6. Anyone calls `splitter.burn()` to send the booked Furnace share to the dead address.
+///   6. `pullAndSplit` burns the Furnace share automatically; anyone can call `splitter.burn()` to
+///      retry if the token refused the transfer at that moment.
 ///
 /// One `WageholdSplitter` can serve many Wrights and many jobs: `lampOilTreasury` and
 /// `titheTreasury` are shared (the Charter's split percentages are the same for every Wright --
@@ -87,8 +88,9 @@ contract WageholdSplitter is ReentrancyGuard {
     /// `pullAndSplit` from crediting the other two destinations.
     mapping(address => uint256) public pendingWithdrawals;
 
-    /// @notice Furnace share booked by `pullAndSplit` and not yet sent to `BURN_ADDRESS`.
-    /// Deferred (see `burn`) so a token that refuses the dead address can never block a split.
+    /// @notice Furnace share booked by `pullAndSplit` and not yet sent to `BURN_ADDRESS`. Normally
+    /// 0: `pullAndSplit` burns it in the same transaction. It is non-zero only if the token
+    /// refused that transfer, and stays there until `burn()` succeeds.
     uint256 public pendingBurn;
 
     /// @notice Lifetime total actually sent to `BURN_ADDRESS`. Feeds the app's Furnace stat.
@@ -199,43 +201,37 @@ contract WageholdSplitter is ReentrancyGuard {
         if (sj.amount == 0) revert JobNotRegistered();
         if (sj.split) revert JobAlreadySplit();
 
-        // Scoped so `job` (a memory pointer) frees its stack slot before the locals below --
-        // the four-way split plus a six-argument event is close to the "stack too deep" limit.
+        // What the Strongbox actually credited this contract for the job: the full wage after
+        // `approve`, only the payee's share after a partial `resolveDispute`, 0 after a full
+        // refund. Splitting this (not the `registerJob` snapshot) keeps the ledger exactly
+        // backed by tokens -- finding S5 was crediting the snapshot (100) when only 60 arrived.
+        uint256 amount;
         {
             WageholdStrongbox.Job memory job = strongbox.getJob(jobId);
             if (job.status != WageholdStrongbox.Status.Released) revert JobNotReleasedYet();
             if (job.payee != address(this)) revert PayeeChangedSinceRegistration();
+            amount = strongbox.releasedToPayee(jobId);
         }
 
-        address patronPool = sj.patronPool;
+        uint256 patronAmount = (amount * PATRON_BPS) / BPS_DENOM;
+        uint256 lampOilAmount = (amount * LAMP_OIL_BPS) / BPS_DENOM;
+        uint256 burnAmount = (amount * FURNACE_BPS) / BPS_DENOM;
+        // Remainder (integer-division dust, at most a few base units) goes to the Tithe rather
+        // than being split further or left stranded. Same rule as the app's
+        // `record_wage_split` (migration 0013), so on-chain and recorded numbers agree.
+        uint256 titheAmount = amount - patronAmount - lampOilAmount - burnAmount;
 
-        uint256 patronAmount;
-        uint256 lampOilAmount;
-        uint256 burnAmount;
-        uint256 titheAmount;
-        {
-            uint256 amount = sj.amount;
-            patronAmount = (amount * PATRON_BPS) / BPS_DENOM;
-            lampOilAmount = (amount * LAMP_OIL_BPS) / BPS_DENOM;
-            burnAmount = (amount * FURNACE_BPS) / BPS_DENOM;
-            // Remainder (integer-division dust, at most a few base units) goes to the Tithe
-            // rather than being split further or left stranded. Same rule as the app's
-            // `record_wage_split` (migration 0013), so on-chain and recorded numbers agree.
-            titheAmount = amount - patronAmount - lampOilAmount - burnAmount;
-        }
-
-        // All effects -- including the event -- happen before the external call below. Nothing
-        // here depends on that call's outcome: the four amounts come entirely from `sj.amount`,
-        // snapshotted back at `registerJob`, never from what `_pullFromStrongboxIfNeeded` pulls.
+        // All effects -- including the event -- happen before the external calls below.
         sj.split = true;
-        pendingWithdrawals[patronPool] += patronAmount;
+        pendingWithdrawals[sj.patronPool] += patronAmount;
         pendingWithdrawals[lampOilTreasury] += lampOilAmount;
         pendingWithdrawals[titheTreasury] += titheAmount;
         pendingBurn += burnAmount;
 
-        emit JobSplit(jobId, patronPool, patronAmount, lampOilAmount, titheAmount, burnAmount);
+        emit JobSplit(jobId, sj.patronPool, patronAmount, lampOilAmount, titheAmount, burnAmount);
 
         _pullFromStrongboxIfNeeded();
+        _tryBurn();
     }
 
     /// @dev Pulls this contract's entire pending balance out of the Strongbox in one go when
@@ -265,8 +261,33 @@ contract WageholdSplitter is ReentrancyGuard {
         emit Withdrawn(msg.sender, amount);
     }
 
-    /// @notice Sends every booked Furnace share to `BURN_ADDRESS`. Permissionless: the
-    /// destination is a constant, so a caller can only ever burn, never redirect.
+    /// @dev Automatic burn, run at the end of every `pullAndSplit`. Best effort by design: if the
+    /// token refuses the transfer (pause, blacklist of the dead address, ...) the split must
+    /// still succeed, so a failure restores the books and leaves `pendingBurn` for a later manual
+    /// `burn()`. Only reached after `_pullFromStrongboxIfNeeded`, when every split job's wage is
+    /// in this contract, so `pendingBurn` is always fully backed by its token balance.
+    function _tryBurn() private {
+        uint256 amount = pendingBurn;
+        if (amount == 0) return;
+
+        pendingBurn = 0;
+        totalBurned += amount;
+
+        (bool ok, bytes memory ret) =
+            address(wageToken).call(abi.encodeCall(IERC20.transfer, (BURN_ADDRESS, amount)));
+        bool success = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (bool))));
+
+        if (success) {
+            emit Burned(msg.sender, amount);
+        } else {
+            pendingBurn = amount;
+            totalBurned -= amount;
+        }
+    }
+
+    /// @notice Manual burn of any Furnace share the automatic burn could not send (for example
+    /// because the token was paused at the time). Permissionless: the destination is a constant,
+    /// so a caller can only ever burn, never redirect. Reverts if the token still refuses.
     function burn() external nonReentrant {
         uint256 amount = pendingBurn;
         if (amount == 0) revert NothingToBurn();

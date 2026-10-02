@@ -1,5 +1,6 @@
 cache/
 out/
+broadcast/*/4663/
 broadcast/*/46630/
 broadcast/**/dry-run/
 .env

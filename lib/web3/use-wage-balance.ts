@@ -4,6 +4,7 @@ import { erc20Abi, formatUnits } from 'viem';
 import { useAccount, useReadContract } from 'wagmi';
 import { wageTokenAddress } from '@/lib/web3/strongbox';
 import { isWalletMode } from '@/lib/identity/mode';
+import { activeChain } from '@/lib/web3/chains';
 
 /**
  * Saldo $WAGE wallet yang sedang terhubung (Revision 1: stat "Your wallet").
@@ -14,11 +15,13 @@ import { isWalletMode } from '@/lib/identity/mode';
  */
 export function useWageBalance(): number | null {
   const { address, isConnected } = useAccount();
-  const enabled = isWalletMode && isConnected && !!address && !!wageTokenAddress;
+  const enabled =
+    isWalletMode && isConnected && !!address && !!wageTokenAddress;
 
   const balance = useReadContract({
     address: wageTokenAddress,
     abi: erc20Abi,
+    chainId: activeChain.id,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
     query: { enabled, refetchInterval: 30_000 },
@@ -26,6 +29,7 @@ export function useWageBalance(): number | null {
   const decimals = useReadContract({
     address: wageTokenAddress,
     abi: erc20Abi,
+    chainId: activeChain.id,
     functionName: 'decimals',
     query: { enabled, staleTime: Infinity },
   });

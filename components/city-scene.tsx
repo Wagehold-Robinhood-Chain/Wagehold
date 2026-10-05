@@ -286,8 +286,12 @@ export function CityScene({
   agents,
   selectedId = null,
   onSelect,
+  workRatioPct = null,
 }: {
   agents: CityAgent[];
+  /** Work Ratio 24 jam (persen) dari Weighhouse -- mengatur kilau jendela landmark Weighhouse.
+   *  null = belum ada data (jendela redup). */
+  workRatioPct?: number | null;
   /** Gedung yang sedang dipilih (ditandai outline + label gelap). */
   selectedId?: string | null;
   /** Klik gedung -> panggil ini (mis. buka Wright profile di panel kiri).
@@ -311,7 +315,13 @@ export function CityScene({
   // Data terbaru selalu lewat ref supaya loop animasi (di luar siklus render
   // React) tidak memegang closure data basi.
   const agentsRef = useRef(agents);
-  agentsRef.current = agents;
+  useEffect(() => {
+    agentsRef.current = agents;
+  }, [agents]);
+  const workRatioRef = useRef<number | null>(workRatioPct);
+  useEffect(() => {
+    workRatioRef.current = workRatioPct;
+  }, [workRatioPct]);
   const selectedRef = useRef(selectedId);
   const onSelectRef = useRef(onSelect);
   useEffect(() => {
@@ -484,6 +494,56 @@ export function CityScene({
 
     const buildings = new Map<string, Building>();
     const pickables: THREE.Mesh[] = [];
+
+    // Weighhouse: landmark kecil di samping Counting House, dengan timbangan di atap.
+    // Kilau jendelanya mengikuti Work Ratio 24 jam (lihat `weighGlow` di loop frame).
+    // Klik -> /weighhouse (ditangani khusus di endDrag lewat WEIGH_ID).
+    const WEIGH_ANGLE = -Math.PI / 5; // di antara dua Ward, di luar plaza (radius 5.2)
+    const WEIGH_R = 7.4;
+    const weigh = new THREE.Group();
+    weigh.position.set(Math.cos(WEIGH_ANGLE) * WEIGH_R, 0, Math.sin(WEIGH_ANGLE) * WEIGH_R);
+    const weighBody = new THREE.Mesh(
+      new THREE.BoxGeometry(1.9, 1.5, 1.5),
+      new THREE.MeshLambertMaterial({ color: 0xe9e1cf }),
+    );
+    weighBody.position.y = 0.75;
+    weigh.add(weighBody);
+    const weighWinMat = new THREE.MeshLambertMaterial({
+      color: 0xffe9a8,
+      emissive: 0xffb020,
+      emissiveIntensity: 0.1,
+    });
+    for (const wx of [-0.55, 0.55]) {
+      const win = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.06), weighWinMat);
+      win.position.set(wx, 0.85, 0.77);
+      weigh.add(win);
+    }
+    const weighRoof = new THREE.Mesh(
+      new THREE.BoxGeometry(2.1, 0.18, 1.7),
+      new THREE.MeshLambertMaterial({ color: 0x56608a }),
+    );
+    weighRoof.position.y = 1.59;
+    weigh.add(weighRoof);
+    // Timbangan: tiang + balok + dua piring.
+    const brassMat = new THREE.MeshLambertMaterial({ color: 0xe6c36a, emissive: 0x6b5200, emissiveIntensity: 0.3 });
+    const weighPost = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.8, 8), brassMat);
+    weighPost.position.y = 2.1;
+    weigh.add(weighPost);
+    const weighBeam = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.07, 0.07), brassMat);
+    weighBeam.position.y = 2.5;
+    weigh.add(weighBeam);
+    for (const px of [-0.7, 0.7]) {
+      const pan = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.2, 0.06, 14), brassMat);
+      pan.position.set(px, 2.12, 0);
+      weigh.add(pan);
+    }
+    const WEIGH_ID = '__weighhouse__';
+    [weighBody, weighRoof].forEach((m) => {
+      m.userData.id = WEIGH_ID;
+      pickables.push(m);
+    });
+    scene.add(weigh);
+    pops.push({ o: weigh, delay: 0.3, dur: 0.6, mode: 'uniform', ease: easeBack });
     const distLabels: {
       el: HTMLDivElement;
       pos: THREE.Vector3;
@@ -771,6 +831,7 @@ export function CityScene({
     );
     function isBlocked(x: number, z: number) {
       if (Math.hypot(x, z) < 5.2) return true; // Counting House
+      if (Math.hypot(x - weigh.position.x, z - weigh.position.z) < 2.4) return true; // Weighhouse
       for (const ang of wardAngles) {
         const dx = Math.cos(ang);
         const dz = Math.sin(ang);
@@ -1345,6 +1406,8 @@ export function CityScene({
 
     const hallLabel = makeLabel('hall', 'Counting House · Tithe');
     labelsEl.appendChild(hallLabel);
+    const weighLabel = makeLabel('hall', 'Weighhouse');
+    labelsEl.appendChild(weighLabel);
 
     // Sorotan emas: gedung yang sedang di-hover (di prototipe: gedung terpilih).
     const outline = new THREE.LineSegments(
@@ -1462,7 +1525,9 @@ export function CityScene({
       dragState = null;
       if (allowClick && wasClick) {
         const id = hit(e);
-        if (id) {
+        if (id === WEIGH_ID) {
+          router.push('/weighhouse');
+        } else if (id) {
           if (onSelectRef.current) onSelectRef.current(id);
           else router.push(`/agents/${id}`);
         }
@@ -1561,6 +1626,7 @@ export function CityScene({
       // Label "Counting House" terbaca di kedua tema.
       const isNight = d < 0.5;
       hallLabel.style.color = isNight ? '#ffd98a' : '#a0741a';
+      weighLabel.style.color = isNight ? '#b9c2f0' : '#56608a';
       hallLabel.style.textShadow = isNight
         ? '0 0 6px rgba(10,14,42,.95), 0 1px 0 rgba(10,14,42,.95)'
         : '0 0 6px #fff, 0 1px 0 #fff';
@@ -1744,6 +1810,14 @@ export function CityScene({
       project(labelPos, hallLabel);
       hallLabel.style.opacity = String(grow(0.6, 0.4, easeOut));
 
+      // Weighhouse: kilau jendela = Work Ratio 24j (0% -> redup, >=25% -> terang penuh).
+      const wr = workRatioRef.current;
+      const weighGlow = wr == null ? 0.1 : 0.1 + Math.min(Math.max(wr, 0) / 25, 1) * 1.1;
+      weighWinMat.emissiveIntensity = weighGlow;
+      labelPos.set(weigh.position.x, 3.3, weigh.position.z);
+      project(labelPos, weighLabel);
+      weighLabel.style.opacity = String(grow(0.8, 0.4, easeOut));
+
       renderer.render(scene, camera);
       raf = requestAnimationFrame(frame);
     }
@@ -1791,10 +1865,10 @@ export function CityScene({
       buildings.forEach((b) => b.label.remove());
       distLabels.forEach((l) => l.el.remove());
       hallLabel.remove();
+      weighLabel.remove();
       renderer.dispose();
       cv.remove();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- agentsRef dipakai untuk data live, scene dibangun sekali per mount
   }, [router]);
 
   return (

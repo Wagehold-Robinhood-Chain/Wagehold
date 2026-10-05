@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 const LINKS = [
   { href: "/", label: "The City" },
   { href: "/jobs", label: "Job Board" },
+  { href: "/weighhouse", label: "Weighhouse" },
 ];
 
 /** Nav kecil di header -- dipakai di Page A (City Dashboard) dan Page B

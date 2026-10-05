@@ -12,8 +12,9 @@
  * Pakai:
  *   npx tsx scripts/e2e-testnet.ts --mode splitter   # Strongbox + Splitter 60/20/10/10 (+ refund, dispute)
  *   npx tsx scripts/e2e-testnet.ts --mode direct     # tanpa Splitter, wage penuh ke wallet Wright
- *   opsional: --with-finding   jalankan skenario S5 (dispute + Splitter) -- MENCEMARI Splitter
- *                              yang dipakai, jangan di Splitter testnet bersama (lihat E2E_TESTNET.md)
+ *   opsional: --with-finding   jalankan skenario S5 (dispute parsial + Splitter). Sudah DIPERBAIKI di
+ *                              kontrak (releasedToPayee); skenario ini memverifikasinya. Jangan jalankan
+ *                              ke Splitter LAMA (sebelum perbaikan) -- itu mencemari Splitter-nya.
  *
  * Env: lihat scripts/.env.e2e.example. `.env.local` dibaca sebagai cadangan, jadi yang diuji
  * adalah konfigurasi yang sama dengan yang dipakai app.
@@ -417,7 +418,7 @@ async function main() {
       ["Tithe", tithe!, amount - (amount * BigInt(60)) / BigInt(100) - (amount * BigInt(20)) / BigInt(100) - (amount * BigInt(10)) / BigInt(100)],
     ];
     const furnace = (amount * BigInt(10)) / BigInt(100);
-    const burnBefore = (await pub.readContract({ address: splitter!, abi: SP, functionName: "pendingBurn" })) as bigint;
+    const burnedBefore = (await pub.readContract({ address: splitter!, abi: SP, functionName: "totalBurned" })) as bigint;
     const uniq = [...new Set(dests.map(([, a]) => a.toLowerCase()))] as Address[];
     const before = new Map(await Promise.all(uniq.map(async (a) => [a, await spPending(a)] as const)));
     const spTokenBefore = await bal(splitter!);
@@ -446,11 +447,13 @@ async function main() {
       assertEq(`ledger Splitter: ${label}`, delta, want, { detail: `+${fmt(delta)}${want !== v2 ? ` (alamat dipakai bersama, total ${fmt(want)})` : ""}` });
     }
     const sum = dests.reduce((s, d) => s + d[2], BigInt(0));
-    const burnAfter = (await pub.readContract({ address: splitter!, abi: SP, functionName: "pendingBurn" })) as bigint;
-    assertEq("Furnace dibukukan 10% di pendingBurn", burnAfter - burnBefore, furnace, { detail: fmt(furnace) });
+    const burnedAfter = (await pub.readContract({ address: splitter!, abi: SP, functionName: "totalBurned" })) as bigint;
+    const stillPending = (await pub.readContract({ address: splitter!, abi: SP, functionName: "pendingBurn" })) as bigint;
+    assertEq("Furnace dibakar otomatis 10% (totalBurned naik)", burnedAfter - burnedBefore, furnace, { detail: fmt(furnace) });
+    assertEq("pendingBurn kosong (burn otomatis lolos)", stillPending, BigInt(0));
     assertEq("60+20+10+10 = wage (tanpa dust hilang)", sum + furnace, amount);
     assertEq("Strongbox kosong untuk job ini (token keluar penuh)", (await bal(strongbox)) - sbBalance0, BigInt(0), { detail: "delta 0" });
-    assertEq("token pindah ke Splitter sebesar wage", (await bal(splitter!)) - spTokenBefore, amount, { detail: fmt(amount) });
+    assertEq("token pindah ke Splitter sebesar wage dikurangi Furnace yang dibakar", (await bal(splitter!)) - spTokenBefore, amount - furnace, { detail: fmt(amount - furnace) });
 
     const again = await splitAfterRelease(uuid);
     assertEq("splitAfterRelease kedua → skipped", again.status, "skipped", { detail: "reason" in again ? again.reason : "" });
@@ -595,7 +598,7 @@ async function main() {
         status: "finding",
         detail: `kredit ${fmt(credited)} vs saldo masuk ${fmt(backed)} → kekurangan ${fmt(credited - backed)}`,
       });
-      // Dampak nyata: coba tarik jatah Patron (60% dari 100 = 60) dari saldo Splitter.
+      // (Hanya terjadi di Splitter LAMA.) Dampak: coba tarik jatah Patron dari saldo Splitter.
       const patronPending = await spPending(wrightAccount.address);
       const spTok = await bal(splitter!);
       try {
@@ -610,7 +613,7 @@ async function main() {
         });
       }
     } else {
-      pass("Splitter solvent setelah dispute parsial", { detail: `kredit ${fmt(credited)} = masuk ${fmt(backed)}` });
+      pass("Splitter solvent setelah dispute parsial (S5 diperbaiki)", { detail: `kredit ${fmt(credited)} = masuk ${fmt(backed)} (setelah Furnace dibakar)` });
     }
     // bersihkan: client menarik refund 40%-nya supaya tidak menggantung ke skenario/run berikutnya
     await send("client withdraw (bersih-bersih refund S5)", clientW, { address: strongbox, abi: SB, functionName: "withdraw" });

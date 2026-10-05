@@ -130,7 +130,7 @@ export async function POST(
   }
 
   // Setelah seal on-chain: bagi wage lewat WageholdSplitter (kontrak yang sudah dideploy
-  // sudah 60/20/10/10; bagian Furnace dibukukan di pendingBurn dan dibakar lewat burn()).
+  // sudah 60/20/10/10; bagian Furnace dibakar otomatis di pullAndSplit).
   // pullAndSplit permissionless, jadi kegagalan di sini TIDAK membatalkan
   // seal (wage sudah dilepas dan tercatat) -- cukup dicatat ke Ledger
   // supaya bisa dijalankan ulang oleh siapa saja.

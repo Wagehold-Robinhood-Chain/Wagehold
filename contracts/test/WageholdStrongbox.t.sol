@@ -217,6 +217,37 @@ contract WageholdStrongboxTest is Test {
         assertEq(uint8(strongbox.getJob(JOB_ID).status), uint8(WageholdStrongbox.Status.Disputed));
     }
 
+    function test_ReleasedToPayee_IsZeroUntilReleased() public {
+        _createJobAndAssign();
+        assertEq(strongbox.releasedToPayee(JOB_ID), 0);
+    }
+
+    function test_ReleasedToPayee_FullWageOnApprove() public {
+        _createJobAndAssign();
+        vm.prank(client);
+        strongbox.approve(JOB_ID);
+        assertEq(strongbox.releasedToPayee(JOB_ID), WAGE);
+    }
+
+    function test_ReleasedToPayee_OnlyPayeeShareOnResolveDispute() public {
+        _createJobAndAssign();
+        vm.prank(client);
+        strongbox.dispute(JOB_ID);
+        uint256 payeeShare = (WAGE * 60) / 100;
+        vm.prank(council);
+        strongbox.resolveDispute(JOB_ID, payeeShare, WAGE - payeeShare);
+        assertEq(strongbox.releasedToPayee(JOB_ID), payeeShare);
+    }
+
+    function test_ReleasedToPayee_ZeroOnFullRefundDispute() public {
+        _createJobAndAssign();
+        vm.prank(client);
+        strongbox.dispute(JOB_ID);
+        vm.prank(council);
+        strongbox.resolveDispute(JOB_ID, 0, WAGE);
+        assertEq(strongbox.releasedToPayee(JOB_ID), 0);
+    }
+
     function test_ResolveDispute_SplitsCorrectly() public {
         _createJobAndAssign();
         vm.prank(client);

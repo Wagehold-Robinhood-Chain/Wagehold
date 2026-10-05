@@ -253,10 +253,10 @@ function SupplyBlock({ supply, stakedByPatrons }: { supply: NonNullable<Summary[
   );
 }
 
-function FlowRow({ label, value, color, tip, max }: { label: string; value: number; color: string; tip: string; max: number }) {
+function FlowRow({ label, value, color, tip, max, href }: { label: string; value: number; color: string; tip: string; max: number; href?: string }) {
   return (
     <div className="grid grid-cols-[110px_1fr_auto] items-center gap-2 py-1 text-[12.5px]">
-      <Tip formula={tip}>{label}</Tip>
+      <Tip formula={tip} href={href}>{label}</Tip>
       <div><div className="h-2 rounded-full" style={{ width: `${Math.max((value / max) * 100, value > 0 ? 2 : 0)}%`, background: color }} /></div>
       <span className="font-mono text-[12px]">{fmtWageUnit(value)}</span>
     </div>
@@ -269,13 +269,13 @@ function FlowBlock({ flow }: { flow: Summary["flow"] }) {
   return (
     <div className="p-3.5">
       {empty && <p className="mb-2 text-[12.5px] text-faint">No wages moved through the Strongbox in this window.</p>}
-      <FlowRow max={max} label="Wages locked" value={flow.locked} color={C.patrons} tip="Σ JobFunded amounts on the Strongbox (escrow)." />
-      <FlowRow max={max} label="Wages sealed" value={flow.sealed} color={C.patrons} tip="Σ SealSet amounts + the payee share of DisputeResolved." />
+      <FlowRow max={max} label="Wages locked" value={flow.locked} color={C.patrons} tip="Σ JobFunded amounts on the Strongbox (escrow)." href={explorerAddress(ADDRESSES.strongbox)} />
+      <FlowRow max={max} label="Wages sealed" value={flow.sealed} color={C.patrons} tip="Σ SealSet amounts + the payee share of DisputeResolved." href={explorerAddress(ADDRESSES.strongbox)} />
       <div className="ml-4 border-l border-line pl-3">
-        <FlowRow max={max} label="Patrons 60%" value={flow.patrons} color={C.patrons} tip="Σ patronAmount from Splitter JobSplit events." />
-        <FlowRow max={max} label="Lamp Oil 20%" value={flow.lampOil} color={C.lampOil} tip="Σ lampOilAmount from JobSplit (compute treasury)." />
-        <FlowRow max={max} label="Tithe 10%" value={flow.tithe} color={C.tithe} tip="Σ titheAmount from JobSplit (includes rounding dust)." />
-        <FlowRow max={max} label="Furnace 10%" value={flow.furnace} color={C.furnace} tip="Σ burnAmount booked by JobSplit. Actually burned only after Splitter.burn()." />
+        <FlowRow max={max} label="Patrons 60%" value={flow.patrons} color={C.patrons} tip="Σ patronAmount from Splitter JobSplit events." href={explorerAddress(ADDRESSES.splitter)} />
+        <FlowRow max={max} label="Lamp Oil 20%" value={flow.lampOil} color={C.lampOil} tip="Σ lampOilAmount from JobSplit (compute treasury)." href={explorerAddress(ADDRESSES.lampOilTreasury)} />
+        <FlowRow max={max} label="Tithe 10%" value={flow.tithe} color={C.tithe} tip="Σ titheAmount from JobSplit (includes rounding dust)." href={explorerAddress(ADDRESSES.titheTreasury)} />
+        <FlowRow max={max} label="Furnace 10%" value={flow.furnace} color={C.furnace} tip="Σ burnAmount booked by JobSplit. Actually burned only after Splitter.burn()." href={explorerAddress(ADDRESSES.splitter)} />
       </div>
       <div className="mt-1 text-[12px] text-faint">Still in escrow {fmtWageUnit(flow.stillInEscrow)} · refunded {fmtWageUnit(flow.refunded)}</div>
       <div className="mt-3 grid grid-cols-4 gap-2 text-center text-[11px] text-muted">

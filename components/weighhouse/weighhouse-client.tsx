@@ -24,10 +24,6 @@ const BUCKET_COLOR: Record<string, string> = {
   burned: C.furnace, curve: "#9c8be0", lp: "#e0a458", locker: "#6c7392", strongbox: C.patrons,
   splitter: "#8dbf7f", treasuries: C.tithe, circulating: "#2e3556",
 };
-const BUCKET_ADDR: Record<string, string> = {
-  burned: ADDRESSES.furnace, strongbox: ADDRESSES.strongbox, splitter: ADDRESSES.splitter,
-  treasuries: ADDRESSES.lampOilTreasury,
-};
 const WINDOWS: Win[] = ["24h", "7d", "all"];
 const WIN_LABEL: Record<Win, string> = { "24h": "24h", "7d": "7d", all: "All" };
 const WIN_PHRASE: Record<Win, string> = { "24h": "in the last 24h", "7d": "in the last 7 days", all: "all time" };
@@ -158,7 +154,7 @@ export function WeighhouseClient({
       {/* B. Supply */}
       <Panel>
         <PanelHeader title="Supply" action={<span className="text-[11px] text-faint">{summary?.supply ? `Block ${summary.supply.blockNumber} · ${ago(summary.supply.updatedAt)}` : ""}</span>} />
-        {summary?.supply ? <SupplyBlock supply={summary.supply} /> : <Empty>No supply snapshot yet.</Empty>}
+        {summary?.supply ? <SupplyBlock supply={summary.supply} stakedByPatrons={summary.stakedByPatrons} /> : <Empty>No supply snapshot yet.</Empty>}
       </Panel>
 
       {/* C + D */}
@@ -223,7 +219,7 @@ function Tile({ label, value, sub, tip, accent }: { label: string; value: string
   );
 }
 
-function SupplyBlock({ supply }: { supply: NonNullable<Summary["supply"]> }) {
+function SupplyBlock({ supply, stakedByPatrons }: { supply: NonNullable<Summary["supply"]>; stakedByPatrons: number }) {
   const bars = supply.buckets.filter((b) => b.amount > 0);
   return (
     <div className="p-3.5">
@@ -242,10 +238,14 @@ function SupplyBlock({ supply }: { supply: NonNullable<Summary["supply"]> }) {
                 <td className="py-1.5"><span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: BUCKET_COLOR[b.key] }} />{b.label} <span className="text-faint">({b.plain})</span>{b.note && <> <Badge tone="warn">{b.note}</Badge></>}</td>
                 <td className="py-1.5 text-right font-mono text-[12px]">{fmtWageUnit(b.amount)}</td>
                 <td className="py-1.5 text-right font-mono text-[12px]">{b.pct.toFixed(2)}%</td>
-                <td className="py-1.5 pl-3 text-right">{BUCKET_ADDR[b.key] ? <a className="text-gold hover:underline" target="_blank" rel="noreferrer" href={explorerAddress(BUCKET_ADDR[b.key])}>↗</a> : null}</td>
+                <td className="py-1.5 pl-3 text-right whitespace-nowrap">
+                  {b.links?.map((l) => (
+                    <a key={l.address} className="ml-2 text-gold hover:underline" target="_blank" rel="noreferrer" title={l.label} aria-label={`${l.label} on Blockscout`} href={explorerAddress(l.address)}>↗</a>
+                  ))}
+                </td>
               </tr>
             ))}
-            <tr className="border-t border-line/60 text-faint"><td className="py-1.5">Staked by patrons <span>(simulation)</span></td><td className="py-1.5 text-right font-mono text-[12px]" colSpan={3}>tracked off-chain until Patronage ships</td></tr>
+            <tr className="border-t border-line/60 text-faint"><td className="py-1.5">Staked by patrons <span>(simulation)</span></td><td className="py-1.5 text-right font-mono text-[12px]">{fmtWageUnit(stakedByPatrons)}</td><td className="py-1.5 text-right text-[11px]" colSpan={2}>off-chain until Patronage ships</td></tr>
           </tbody>
         </table>
       </div>

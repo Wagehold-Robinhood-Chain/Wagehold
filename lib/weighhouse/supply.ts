@@ -1,5 +1,5 @@
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { publicClient } from "@/lib/web3/public-client";
+import { weighhouseClient as publicClient } from "./rpc";
 import { ADDRESSES, OPEN_ITEMS, PONS } from "@/lib/web3/addresses";
 import { ERC20_ABI } from "./events";
 import { readPoolState, wagePoolKey } from "./pons";

@@ -1,5 +1,5 @@
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { publicClient } from "@/lib/web3/public-client";
+import { weighhouseClient as publicClient } from "./rpc";
 import { ADDRESSES } from "@/lib/web3/addresses";
 import { ZERO_ADDRESS, quoteDecimals, readPoolState, readQuoteReserve, wagePoolKey } from "./pons";
 import { quotePerWage } from "./v4math";
@@ -104,6 +104,17 @@ async function fetchOnChain(): Promise<{ priceQuote: number; quoteIsEth: boolean
     quoteUsd = Number(round[1]) / 10 ** Number(fdec);
   }
   return { priceQuote, quoteIsEth, quoteUsd };
+}
+
+/** Snapshot harga jatuh tempo kalau yang terakhir sudah >= ~5 menit (toleransi 30 dtk untuk jitter cron).
+ *  Berbasis data, bukan menit jam dinding, jadi satu panggilan cron yang telat/terlewat tidak melubangi grafik.
+ *  Gagal membaca -> dianggap jatuh tempo (lebih baik snapshot ekstra daripada lubang). */
+export const PRICE_SNAPSHOT_EVERY_MS = 5 * 60_000;
+export async function priceSnapshotDue(now = Date.now()): Promise<boolean> {
+  const { data, error } = await createServiceRoleClient()
+    .from("price_snapshots").select("taken_at").order("taken_at", { ascending: false }).limit(1).maybeSingle();
+  if (error || !data) return true;
+  return now - new Date(data.taken_at).getTime() >= PRICE_SNAPSHOT_EVERY_MS - 30_000;
 }
 
 export async function takePriceSnapshot() {

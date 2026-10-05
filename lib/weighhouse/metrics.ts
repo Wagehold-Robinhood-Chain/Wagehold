@@ -1,5 +1,5 @@
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { ADDRESSES, WAGE_TOTAL_SUPPLY_CAP } from "@/lib/web3/addresses";
+import { ADDRESSES, OPEN_ITEMS, PONS, WAGE_TOTAL_SUPPLY_CAP } from "@/lib/web3/addresses";
 import { EVENT_KIND, LEDGER_EVENT_NAMES } from "./events";
 
 export type Win = "24h" | "7d" | "all";
@@ -20,7 +20,8 @@ export const wageNum = (v: bigint | string | number | null | undefined): number 
   return Number(whole) + frac;
 };
 
-export interface SupplyBucket { key: string; label: string; plain: string; amount: number; pct: number; address?: string; note?: string }
+export interface BucketLink { label: string; address: string }
+export interface SupplyBucket { key: string; label: string; plain: string; amount: number; pct: number; links?: BucketLink[]; note?: string }
 
 export interface Summary {
   window: Win;
@@ -35,6 +36,8 @@ export interface Summary {
     sealedWage: number; tradedWage: number; tradeVolumeSource: "on-chain" | "none";
     tradeVolume: { curveWage: number; poolWage: number; trades: number };
   };
+  /** Total $WAGE yang di-stake patron (simulasi, tabel `stakes`, satuan WAGE utuh). */
+  stakedByPatrons: number;
   supply: { updatedAt: string | null; blockNumber: number | null; total: number; buckets: SupplyBucket[]; lpTracked: boolean; sumGapWage: number | null } | null;
   flow: {
     locked: number; sealed: number; patrons: number; lampOil: number; tithe: number; furnace: number;
@@ -50,12 +53,26 @@ export interface Summary {
   indexer: { lastBlock: number | null };
 }
 
+/** Jumlah stake aktif semua patron (tabel `stakes`). Dibaca per halaman 1000 baris karena PostgREST
+ *  membatasi satu respons; agregat SQL (`sum()`) sengaja tidak dipakai agar tidak bergantung pada setelan project. */
+async function sumStakes(): Promise<number> {
+  const db = createServiceRoleClient();
+  let total = 0;
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db.from("stakes").select("amount").gt("amount", 0).order("id").range(from, from + 999);
+    if (error || !data) break;
+    for (const r of data) total += Number(r.amount) || 0;
+    if (data.length < 1000) break;
+  }
+  return total;
+}
+
 export async function getSummary(win: Win): Promise<Summary> {
   const db = createServiceRoleClient();
   const since = sinceFor(win);
   const now = Date.now();
 
-  const [flowRes, volRes, supplyRes, priceRes, price24Res, burnsRes, dailyRes, allBurnRes, gradRes, stateRes] = await Promise.all([
+  const [flowRes, volRes, supplyRes, priceRes, price24Res, burnsRes, dailyRes, allBurnRes, gradRes, stateRes, stakedByPatrons] = await Promise.all([
     db.rpc("weighhouse_flow", { p_since: since }),
     db.rpc("weighhouse_trade_volume", { p_since: since }),
     db.from("supply_snapshots").select("*").order("taken_at", { ascending: false }).limit(1).maybeSingle(),
@@ -67,6 +84,7 @@ export async function getSummary(win: Win): Promise<Summary> {
     db.rpc("weighhouse_burn_daily", { p_since: null }),
     db.from("chain_events").select("block_time").eq("event", "PoolGraduated").order("block_time", { ascending: true }).limit(1).maybeSingle(),
     db.from("indexer_state").select("last_block").eq("key", "chain_events").maybeSingle(),
+    sumStakes().catch(() => 0),
   ]);
 
   const f = flowRes.data;
@@ -92,18 +110,21 @@ export async function getSummary(win: Win): Promise<Summary> {
   if (sp) {
     const total = big(sp.total);
     const pct = (b: bigint) => (total > 0n ? Number((b * 100_000n) / total) / 1000 : 0);
-    const mk = (key: string, label: string, plain: string, b: bigint | null, address?: string, note?: string): SupplyBucket => ({
-      key, label, plain, amount: wageNum(b ?? 0n), pct: pct(b ?? 0n), address, note,
+    const mk = (key: string, label: string, plain: string, b: bigint | null, links?: BucketLink[], note?: string): SupplyBucket => ({
+      key, label, plain, amount: wageNum(b ?? 0n), pct: pct(b ?? 0n), links, note,
     });
     const buckets: SupplyBucket[] = [
-      mk("burned", "Furnace", "burned", big(sp.burned), ADDRESSES.furnace),
-      mk("curve", "Bonding curve", "pre-graduation", big(sp.curve)),
-      mk("lp", "LP pool", "post-graduation", sp.lp == null ? 0n : big(sp.lp), undefined,
+      mk("burned", "Furnace", "burned", big(sp.burned), [{ label: "Furnace (dEaD)", address: ADDRESSES.furnace }]),
+      mk("curve", "Bonding curve", "pre-graduation", big(sp.curve), OPEN_ITEMS.wageCurve ? [{ label: "Bonding curve", address: OPEN_ITEMS.wageCurve }] : undefined),
+      mk("lp", "LP pool", "post-graduation", sp.lp == null ? 0n : big(sp.lp), [{ label: "Uniswap v4 PoolManager", address: PONS.poolManager }],
         sp.lp == null ? "Not tracked yet" : big(sp.lp) > 0n ? "Estimated (full-range pool)" : undefined),
-      mk("locker", "Pons locker", "locked", big(sp.locker)),
-      mk("strongbox", "Strongbox", "escrow", big(sp.strongbox), ADDRESSES.strongbox),
-      mk("splitter", "Splitter", "pending split / burn", big(sp.splitter), ADDRESSES.splitter),
-      mk("treasuries", "Treasuries", "Lamp Oil + Tithe", big(sp.treasuries)),
+      mk("locker", "Pons locker", "locked", big(sp.locker), [{ label: "Pons locker", address: PONS.launchLocker }]),
+      mk("strongbox", "Strongbox", "escrow", big(sp.strongbox), [{ label: "Strongbox", address: ADDRESSES.strongbox }]),
+      mk("splitter", "Splitter", "pending split / burn", big(sp.splitter), [{ label: "Splitter", address: ADDRESSES.splitter }]),
+      mk("treasuries", "Treasuries", "Lamp Oil + Tithe", big(sp.treasuries), [
+        { label: "Lamp Oil", address: ADDRESSES.lampOilTreasury },
+        { label: "Tithe", address: ADDRESSES.titheTreasury },
+      ]),
       mk("circulating", "Circulating", "everything else", big(sp.circulating)),
     ];
     const sum = [sp.burned, sp.curve, sp.lp, sp.locker, sp.strongbox, sp.splitter, sp.treasuries, sp.circulating].reduce<bigint>((a, v) => a + big(v), 0n);
@@ -143,6 +164,7 @@ export async function getSummary(win: Win): Promise<Summary> {
       workRatioPct, workRatioCapped, sealedWage: wageNum(sealed), tradedWage: wageNum(vol), tradeVolumeSource,
       tradeVolume: { curveWage: wageNum(curveVol), poolWage: wageNum(poolVol), trades: Number(tv.trades ?? 0) },
     },
+    stakedByPatrons,
     supply,
     flow: {
       locked: wageNum(locked), sealed: wageNum(sealed),

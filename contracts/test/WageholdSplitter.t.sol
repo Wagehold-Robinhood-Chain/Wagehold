@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {WageholdStrongbox} from "../src/WageholdStrongbox.sol";
 import {WageholdSplitter} from "../src/WageholdSplitter.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
+import {BlockableToken} from "./mocks/BlockableToken.sol";
 
 contract WageholdSplitterTest is Test {
     WageholdStrongbox internal strongbox;
@@ -155,12 +156,15 @@ contract WageholdSplitterTest is Test {
         assertEq(splitter.pendingWithdrawals(patronPool), expectedPatron);
         assertEq(splitter.pendingWithdrawals(lampOilTreasury), expectedLampOil);
         assertEq(splitter.pendingWithdrawals(titheTreasury), expectedTithe);
-        assertEq(splitter.pendingBurn(), expectedBurn);
+        // The Furnace share is burned in the same transaction: nothing left pending.
+        assertEq(splitter.pendingBurn(), 0);
+        assertEq(splitter.totalBurned(), expectedBurn);
+        assertEq(token.balanceOf(splitter.BURN_ADDRESS()), expectedBurn);
 
-        // Tokens have actually left the Strongbox and now sit in the Splitter, waiting to be
+        // The rest has actually left the Strongbox and sits in the Splitter, waiting to be
         // withdrawn by each destination.
         assertEq(token.balanceOf(address(strongbox)), 0);
-        assertEq(token.balanceOf(address(splitter)), WAGE);
+        assertEq(token.balanceOf(address(splitter)), WAGE - expectedBurn);
         assertEq(strongbox.pendingWithdrawals(address(splitter)), 0);
 
         WageholdSplitter.SplitJob memory sj = splitter.getSplit(JOB_ID);
@@ -229,12 +233,14 @@ contract WageholdSplitterTest is Test {
 
         splitter.pullAndSplit(JOB_ID); // pulls the full 2 * WAGE into the Splitter
         assertEq(strongbox.pendingWithdrawals(address(splitter)), 0);
-        assertEq(token.balanceOf(address(splitter)), 2 * WAGE);
+        // 2 * WAGE arrived; job 1's Furnace share (10%) was burned straight away.
+        assertEq(token.balanceOf(address(splitter)), 2 * WAGE - (WAGE * 1_000) / 10_000);
 
         splitter.pullAndSplit(JOB_ID_2); // must not revert trying to pull an already-empty balance
 
         uint256 expectedPatronPerJob = (WAGE * 6_000) / 10_000;
-        assertEq(splitter.pendingBurn(), 2 * ((WAGE * 1_000) / 10_000));
+        assertEq(splitter.pendingBurn(), 0);
+        assertEq(splitter.totalBurned(), 2 * ((WAGE * 1_000) / 10_000));
         assertEq(splitter.pendingWithdrawals(patronPool), 2 * expectedPatronPerJob);
     }
 
@@ -283,10 +289,11 @@ contract WageholdSplitterTest is Test {
 
         uint256 total = splitter.pendingWithdrawals(patronPool)
             + splitter.pendingWithdrawals(lampOilTreasury) + splitter.pendingWithdrawals(titheTreasury)
-            + splitter.pendingBurn();
+            + splitter.pendingBurn() + splitter.totalBurned();
         assertEq(total, amount);
-        // The Splitter holds exactly what it has booked: nothing stranded, nothing owed twice.
-        assertEq(token.balanceOf(address(splitter)), amount);
+        // The Splitter holds exactly what it still owes: nothing stranded, nothing owed twice.
+        assertEq(token.balanceOf(address(splitter)), amount - splitter.totalBurned());
+        assertEq(token.balanceOf(splitter.BURN_ADDRESS()), splitter.totalBurned());
     }
 
     // ------------------------------------------------------------------
@@ -359,37 +366,41 @@ contract WageholdSplitterTest is Test {
         splitter.pullAndSplit(JOB_ID);
     }
 
-    function test_Burn_SendsFurnaceShareToDeadAddress() public {
-        _splitOneJob();
+    function test_Burn_IsAutomaticOnPullAndSplit() public {
         uint256 expectedBurn = (WAGE * 1_000) / 10_000; // 100e6
         address dead = splitter.BURN_ADDRESS();
 
+        vm.prank(client);
+        strongbox.createJob(JOB_ID, WAGE);
+        vm.prank(council);
+        strongbox.setPayee(JOB_ID, address(splitter));
+        vm.prank(council);
+        splitter.registerJob(JOB_ID, patronPool);
+        vm.prank(client);
+        strongbox.approve(JOB_ID);
+
         vm.expectEmit(true, false, false, true, address(splitter));
         emit WageholdSplitter.Burned(stranger, expectedBurn);
-
-        vm.prank(stranger); // permissionless
-        splitter.burn();
+        vm.prank(stranger);
+        splitter.pullAndSplit(JOB_ID);
 
         assertEq(token.balanceOf(dead), expectedBurn);
         assertEq(splitter.pendingBurn(), 0);
         assertEq(splitter.totalBurned(), expectedBurn);
-        // The other three parts are untouched and still fully backed by tokens.
         assertEq(token.balanceOf(address(splitter)), WAGE - expectedBurn);
     }
 
-    function test_Burn_RevertsWithNothingToBurn() public {
+    function test_Burn_ManualRevertsWithNothingToBurn() public {
         vm.expectRevert(WageholdSplitter.NothingToBurn.selector);
         splitter.burn();
 
-        _splitOneJob();
-        splitter.burn();
+        _splitOneJob(); // the automatic burn already emptied pendingBurn
         vm.expectRevert(WageholdSplitter.NothingToBurn.selector);
         splitter.burn();
     }
 
     function test_Burn_AccumulatesAcrossJobs() public {
         _splitOneJob();
-        splitter.burn();
 
         vm.prank(client);
         strongbox.createJob(JOB_ID_2, WAGE);
@@ -400,9 +411,144 @@ contract WageholdSplitterTest is Test {
         vm.prank(client);
         strongbox.approve(JOB_ID_2);
         splitter.pullAndSplit(JOB_ID_2);
-        splitter.burn();
 
         assertEq(splitter.totalBurned(), 2 * ((WAGE * 1_000) / 10_000));
+        assertEq(splitter.pendingBurn(), 0);
+    }
+
+    /// @notice If the token refuses the burn transfer, the split still succeeds, the Furnace
+    /// share stays booked, and a later manual `burn()` finishes the job once the token allows it.
+    function test_Burn_TokenRefusal_DoesNotBlockSplit_ManualBurnRecovers() public {
+        BlockableToken bt = new BlockableToken();
+        WageholdStrongbox sb2 = new WageholdStrongbox(bt, council, owner);
+        WageholdSplitter sp2 =
+            new WageholdSplitter(bt, sb2, council, owner, lampOilTreasury, titheTreasury);
+        address dead = sp2.BURN_ADDRESS();
+        bt.setBlock(dead, true);
+
+        bt.mint(client, WAGE);
+        vm.prank(client);
+        bt.approve(address(sb2), type(uint256).max);
+        vm.prank(client);
+        sb2.createJob(JOB_ID, WAGE);
+        vm.startPrank(council);
+        sb2.setPayee(JOB_ID, address(sp2));
+        sp2.registerJob(JOB_ID, patronPool);
+        vm.stopPrank();
+        vm.prank(client);
+        sb2.approve(JOB_ID);
+
+        sp2.pullAndSplit(JOB_ID); // must not revert even though the burn transfer is refused
+
+        uint256 expectedBurn = (WAGE * 1_000) / 10_000;
+        assertEq(sp2.pendingBurn(), expectedBurn);
+        assertEq(sp2.totalBurned(), 0);
+        assertEq(bt.balanceOf(address(sp2)), WAGE); // everything still backed
+        assertEq(sp2.pendingWithdrawals(patronPool), (WAGE * 6_000) / 10_000);
+
+        vm.expectRevert(); // manual burn also reverts while the token still refuses
+        sp2.burn();
+
+        bt.setBlock(dead, false);
+        sp2.burn();
+        assertEq(bt.balanceOf(dead), expectedBurn);
+        assertEq(sp2.pendingBurn(), 0);
+        assertEq(sp2.totalBurned(), expectedBurn);
+    }
+
+    // ------------------------------------------------------------------
+    // S5: partial / full-refund disputes must stay solvent
+    // ------------------------------------------------------------------
+
+    function _fundAssignRegister(bytes32 jobId, uint256 amount) internal {
+        vm.prank(client);
+        strongbox.createJob(jobId, amount);
+        vm.startPrank(council);
+        strongbox.setPayee(jobId, address(splitter));
+        splitter.registerJob(jobId, patronPool);
+        vm.stopPrank();
+    }
+
+    function test_S5_PartialDispute_SplitsOnlyWhatWasReleased() public {
+        _fundAssignRegister(JOB_ID, WAGE);
+
+        vm.prank(client);
+        strongbox.dispute(JOB_ID);
+        uint256 payeeShare = 600e6;
+        vm.prank(council);
+        strongbox.resolveDispute(JOB_ID, payeeShare, WAGE - payeeShare);
+
+        assertEq(strongbox.releasedToPayee(JOB_ID), payeeShare);
+
+        splitter.pullAndSplit(JOB_ID);
+
+        // 60/20/10/10 of 600, not of the original 1,000.
+        assertEq(splitter.pendingWithdrawals(patronPool), 360e6);
+        assertEq(splitter.pendingWithdrawals(lampOilTreasury), 120e6);
+        assertEq(splitter.pendingWithdrawals(titheTreasury), 60e6);
+        assertEq(splitter.totalBurned(), 60e6);
+        // Solvent: the Splitter holds exactly what it still owes.
+        assertEq(token.balanceOf(address(splitter)), 360e6 + 120e6 + 60e6);
+
+        vm.prank(patronPool);
+        splitter.withdraw(); // used to revert before the fix (ledger said 700, balance was 600)
+        assertEq(token.balanceOf(patronPool), 360e6);
+
+        // The client's 400 refund share is untouched and withdrawable from the Strongbox.
+        vm.prank(client);
+        strongbox.withdraw();
+        assertEq(token.balanceOf(client), CLIENT_BALANCE - WAGE + (WAGE - payeeShare));
+    }
+
+    function test_S5_FullRefundDispute_CreditsNothing() public {
+        _fundAssignRegister(JOB_ID, WAGE);
+
+        vm.prank(client);
+        strongbox.dispute(JOB_ID);
+        vm.prank(council);
+        strongbox.resolveDispute(JOB_ID, 0, WAGE);
+
+        assertEq(strongbox.releasedToPayee(JOB_ID), 0);
+
+        splitter.pullAndSplit(JOB_ID); // succeeds with zero credits instead of inventing a wage
+
+        assertEq(splitter.pendingWithdrawals(patronPool), 0);
+        assertEq(splitter.pendingWithdrawals(lampOilTreasury), 0);
+        assertEq(splitter.pendingWithdrawals(titheTreasury), 0);
+        assertEq(splitter.pendingBurn(), 0);
+        assertEq(splitter.totalBurned(), 0);
+        assertEq(token.balanceOf(address(splitter)), 0);
+        assertTrue(splitter.getSplit(JOB_ID).split);
+    }
+
+    /// @notice The scenario the finding warned about: a short job must not be paid out of a
+    /// healthy job's tokens in a Splitter that holds several jobs at once.
+    function test_S5_PartialDispute_DoesNotDrainOtherJobs() public {
+        _fundAssignRegister(JOB_ID, WAGE);
+        _fundAssignRegister(JOB_ID_2, WAGE);
+
+        vm.prank(client);
+        strongbox.dispute(JOB_ID);
+        vm.prank(council);
+        strongbox.resolveDispute(JOB_ID, 600e6, 400e6);
+        vm.prank(client);
+        strongbox.approve(JOB_ID_2);
+
+        splitter.pullAndSplit(JOB_ID);
+        splitter.pullAndSplit(JOB_ID_2);
+
+        uint256 owed = splitter.pendingWithdrawals(patronPool)
+            + splitter.pendingWithdrawals(lampOilTreasury) + splitter.pendingWithdrawals(titheTreasury);
+        assertEq(owed, 600e6 + WAGE - splitter.totalBurned());
+        assertEq(token.balanceOf(address(splitter)), owed);
+
+        vm.prank(patronPool);
+        splitter.withdraw();
+        vm.prank(lampOilTreasury);
+        splitter.withdraw();
+        vm.prank(titheTreasury);
+        splitter.withdraw();
+        assertEq(token.balanceOf(address(splitter)), 0); // every last unit paid out, none short
     }
 
     function test_Constants_SumToDenominator() public view {

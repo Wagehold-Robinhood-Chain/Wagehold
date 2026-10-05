@@ -1,26 +1,63 @@
-import { erc20Abi, parseUnits } from "viem";
+import { erc20Abi, formatUnits, parseUnits } from 'viem';
 import {
   getAccount,
   getChainId,
   readContract,
   waitForTransactionReceipt,
   writeContract,
-} from "wagmi/actions";
-import { wagmiConfig } from "@/lib/web3/config";
-import { SUPPORTED_CHAIN_IDS } from "@/lib/web3/chains";
+} from 'wagmi/actions';
+import { wagmiConfig } from '@/lib/web3/config';
+import { SUPPORTED_CHAIN_IDS, activeChain } from '@/lib/web3/chains';
 import {
   computeJobId,
   isOnChainEscrowConfigured,
   strongboxAbi,
   strongboxAddress,
   wageTokenAddress,
-} from "@/lib/web3/strongbox";
+} from '@/lib/web3/strongbox';
 
 export class UnsupportedNetworkError extends Error {
   constructor() {
-    super("Switch your wallet to Robinhood Chain before locking the wage on-chain.");
-    this.name = "UnsupportedNetworkError";
+    super(
+      'Switch your wallet to Robinhood Chain before locking the wage on-chain.',
+    );
+    this.name = 'UnsupportedNetworkError';
   }
+}
+
+export class InsufficientWageError extends Error {
+  constructor(have: string, need: string) {
+    super(
+      `Your wallet has ${have} $WAGEHOLD but this job needs ${need}. ` +
+        `Get more $WAGEHOLD on Robinhood Chain first (your ETH is only used for gas).`,
+    );
+    this.name = 'InsufficientWageError';
+  }
+}
+
+export class WalletRejectedError extends Error {
+  constructor() {
+    super(
+      "You rejected the transaction in your wallet. Nothing was sent -- post the job again when you're ready.",
+    );
+    this.name = 'WalletRejectedError';
+  }
+}
+
+function isUserRejection(err: unknown): boolean {
+  const e = err as {
+    name?: string;
+    code?: number;
+    shortMessage?: string;
+    message?: string;
+  };
+  return (
+    e?.name === 'UserRejectedRequestError' ||
+    e?.code === 4001 ||
+    /user rejected|rejected the request|user denied/i.test(
+      `${e?.shortMessage ?? ''} ${e?.message ?? ''}`,
+    )
+  );
 }
 
 export interface LockWageResult {
@@ -47,11 +84,23 @@ export interface LockWageResult {
  */
 export async function lockWageOnChain(
   jobUuid: string,
-  budgetUsdc: number
+  budgetUsdc: number,
+): Promise<LockWageResult> {
+  try {
+    return await lockWageOnChainInner(jobUuid, budgetUsdc);
+  } catch (err) {
+    if (isUserRejection(err)) throw new WalletRejectedError();
+    throw err;
+  }
+}
+
+async function lockWageOnChainInner(
+  jobUuid: string,
+  budgetUsdc: number,
 ): Promise<LockWageResult> {
   if (!isOnChainEscrowConfigured || !strongboxAddress || !wageTokenAddress) {
     throw new Error(
-      "On-chain escrow isn't configured yet (NEXT_PUBLIC_STRONGBOX_ADDRESS / NEXT_PUBLIC_WAGE_TOKEN_ADDRESS)."
+      "On-chain escrow isn't configured yet (NEXT_PUBLIC_STRONGBOX_ADDRESS / NEXT_PUBLIC_WAGE_TOKEN_ADDRESS).",
     );
   }
 
@@ -62,22 +111,41 @@ export async function lockWageOnChain(
 
   const { address } = getAccount(wagmiConfig);
   if (!address) {
-    throw new Error("Connect your wallet first to lock the wage on-chain.");
+    throw new Error('Connect your wallet first to lock the wage on-chain.');
   }
 
   const decimals = await readContract(wagmiConfig, {
     address: wageTokenAddress,
     abi: erc20Abi,
-    functionName: "decimals",
+    chainId: activeChain.id,
+    functionName: 'decimals',
   });
 
   const amount = parseUnits(budgetUsdc.toFixed(decimals), decimals);
   const onChainJobId = computeJobId(jobUuid);
 
+  // Cek saldo token SEBELUM meminta tanda tangan apa pun. Wallet yang hanya punya ETH
+  // (saldo token 0) bisa tetap dibaca; approve() tidak akan pernah diminta kalau
+  // saldonya memang tidak cukup untuk createJob.
+  const balance = await readContract(wagmiConfig, {
+    address: wageTokenAddress,
+    abi: erc20Abi,
+    chainId: activeChain.id,
+    functionName: 'balanceOf',
+    args: [address],
+  });
+  if (balance < amount) {
+    throw new InsufficientWageError(
+      formatUnits(balance, decimals),
+      formatUnits(amount, decimals),
+    );
+  }
+
   const allowance = await readContract(wagmiConfig, {
     address: wageTokenAddress,
     abi: erc20Abi,
-    functionName: "allowance",
+    chainId: activeChain.id,
+    functionName: 'allowance',
     args: [address, strongboxAddress],
   });
 
@@ -85,7 +153,7 @@ export async function lockWageOnChain(
     const approveHash = await writeContract(wagmiConfig, {
       address: wageTokenAddress,
       abi: erc20Abi,
-      functionName: "approve",
+      functionName: 'approve',
       args: [strongboxAddress, amount],
     });
     await waitForTransactionReceipt(wagmiConfig, { hash: approveHash });
@@ -94,7 +162,7 @@ export async function lockWageOnChain(
   const txHash = await writeContract(wagmiConfig, {
     address: strongboxAddress,
     abi: strongboxAbi,
-    functionName: "createJob",
+    functionName: 'createJob',
     args: [onChainJobId, amount],
   });
   await waitForTransactionReceipt(wagmiConfig, { hash: txHash });

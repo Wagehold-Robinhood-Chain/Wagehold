@@ -287,11 +287,15 @@ export function CityScene({
   selectedId = null,
   onSelect,
   workRatioPct = null,
+  burnPulse = 0,
 }: {
   agents: CityAgent[];
   /** Work Ratio 24 jam (persen) dari Weighhouse -- mengatur kilau jendela landmark Weighhouse.
    *  null = belum ada data (jendela redup). */
   workRatioPct?: number | null;
+  /** Penghitung event Burned baru (naik 1 tiap burn lewat realtime) -- memicu kilat merah di tungku Furnace.
+   *  Nilai awal dipakai sebagai baseline (tidak memicu kilat). */
+  burnPulse?: number;
   /** Gedung yang sedang dipilih (ditandai outline + label gelap). */
   selectedId?: string | null;
   /** Klik gedung -> panggil ini (mis. buka Wright profile di panel kiri).
@@ -322,6 +326,10 @@ export function CityScene({
   useEffect(() => {
     workRatioRef.current = workRatioPct;
   }, [workRatioPct]);
+  const burnPulseRef = useRef(burnPulse);
+  useEffect(() => {
+    burnPulseRef.current = burnPulse;
+  }, [burnPulse]);
   const selectedRef = useRef(selectedId);
   const onSelectRef = useRef(onSelect);
   useEffect(() => {
@@ -544,6 +552,47 @@ export function CityScene({
     });
     scene.add(weigh);
     pops.push({ o: weigh, delay: 0.3, dur: 0.6, mode: 'uniform', ease: easeBack });
+
+    // Furnace: tungku batu kecil tempat $WAGE dibakar, di sisi lain Weighhouse (di luar plaza).
+    // Bara redup; kilat merah ~2,8 dtk tiap event Burned baru (prop `burnPulse`, lihat loop frame).
+    // Hanya material emissive/opasitas -- tanpa PointLight tambahan.
+    const FURN_ANGLE = -Math.PI * 0.345;
+    const FURN_R = 7.4;
+    const furnace = new THREE.Group();
+    furnace.position.set(Math.cos(FURN_ANGLE) * FURN_R, 0, Math.sin(FURN_ANGLE) * FURN_R);
+    furnace.rotation.y = Math.atan2(-Math.cos(FURN_ANGLE), -Math.sin(FURN_ANGLE)); // mulut tungku menghadap pusat kota
+    const furnBody = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.62, 0.78, 1.1, 14),
+      new THREE.MeshLambertMaterial({ color: 0x4a4f66 }),
+    );
+    furnBody.position.y = 0.55;
+    furnace.add(furnBody);
+    const furnChimney = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.2, 0.26, 0.9, 10),
+      new THREE.MeshLambertMaterial({ color: 0x3a3f55 }),
+    );
+    furnChimney.position.y = 1.5;
+    furnace.add(furnChimney);
+    const furnMouthMat = new THREE.MeshLambertMaterial({
+      color: 0x2a0d0d,
+      emissive: 0xe27070,
+      emissiveIntensity: 0.15,
+    });
+    const furnMouth = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.08), furnMouthMat);
+    furnMouth.position.set(0, 0.4, 0.72);
+    furnace.add(furnMouth);
+    const furnFlameMat = new THREE.MeshBasicMaterial({
+      color: 0xe27070,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    });
+    const furnFlame = new THREE.Mesh(new THREE.ConeGeometry(0.34, 1.1, 10), furnFlameMat);
+    furnFlame.position.y = 2.5;
+    furnFlame.visible = false;
+    furnace.add(furnFlame);
+    scene.add(furnace);
+    pops.push({ o: furnace, delay: 0.4, dur: 0.6, mode: 'uniform', ease: easeBack });
     const distLabels: {
       el: HTMLDivElement;
       pos: THREE.Vector3;
@@ -832,6 +881,7 @@ export function CityScene({
     function isBlocked(x: number, z: number) {
       if (Math.hypot(x, z) < 5.2) return true; // Counting House
       if (Math.hypot(x - weigh.position.x, z - weigh.position.z) < 2.4) return true; // Weighhouse
+      if (Math.hypot(x - furnace.position.x, z - furnace.position.z) < 2.2) return true; // Furnace
       for (const ang of wardAngles) {
         const dx = Math.cos(ang);
         const dz = Math.sin(ang);
@@ -1408,6 +1458,8 @@ export function CityScene({
     labelsEl.appendChild(hallLabel);
     const weighLabel = makeLabel('hall', 'Weighhouse');
     labelsEl.appendChild(weighLabel);
+    const furnaceLabel = makeLabel('hall', 'Furnace');
+    labelsEl.appendChild(furnaceLabel);
 
     // Sorotan emas: gedung yang sedang di-hover (di prototipe: gedung terpilih).
     const outline = new THREE.LineSegments(
@@ -1627,6 +1679,7 @@ export function CityScene({
       const isNight = d < 0.5;
       hallLabel.style.color = isNight ? '#ffd98a' : '#a0741a';
       weighLabel.style.color = isNight ? '#b9c2f0' : '#56608a';
+      furnaceLabel.style.color = isNight ? '#f0a0a0' : '#a23c3c';
       hallLabel.style.textShadow = isNight
         ? '0 0 6px rgba(10,14,42,.95), 0 1px 0 rgba(10,14,42,.95)'
         : '0 0 6px #fff, 0 1px 0 #fff';
@@ -1639,6 +1692,8 @@ export function CityScene({
     let raf = 0;
     const labelPos = new THREE.Vector3();
 
+    let burnSeen = -1; // -1 = belum membaca burnPulse
+    let flareStart = -1; // detik (t) kilat terakhir dimulai
     function frame(now: number) {
       const dt = Math.min(0.05, (now - lastTime) / 1000);
       lastTime = now;
@@ -1818,6 +1873,20 @@ export function CityScene({
       project(labelPos, weighLabel);
       weighLabel.style.opacity = String(grow(0.8, 0.4, easeOut));
 
+      // Furnace: kilat merah tiap burnPulse naik (nilai pertama = baseline, bukan event).
+      if (burnPulseRef.current !== burnSeen) {
+        if (burnSeen !== -1) flareStart = t;
+        burnSeen = burnPulseRef.current;
+      }
+      const flare = flareStart < 0 ? 0 : Math.max(0, 1 - (t - flareStart) / 2.8);
+      furnMouthMat.emissiveIntensity = 0.15 + flare * 1.6;
+      furnFlameMat.opacity = flare * 0.85;
+      furnFlame.visible = flare > 0.01;
+      if (!reduceMotion) furnFlame.scale.set(1 + 0.12 * Math.sin(t * 22), 0.7 + flare * 0.5, 1 + 0.12 * Math.cos(t * 19));
+      labelPos.set(furnace.position.x, 3.5, furnace.position.z);
+      project(labelPos, furnaceLabel);
+      furnaceLabel.style.opacity = String(grow(0.9, 0.4, easeOut));
+
       renderer.render(scene, camera);
       raf = requestAnimationFrame(frame);
     }
@@ -1866,6 +1935,7 @@ export function CityScene({
       distLabels.forEach((l) => l.el.remove());
       hallLabel.remove();
       weighLabel.remove();
+      furnaceLabel.remove();
       renderer.dispose();
       cv.remove();
     };

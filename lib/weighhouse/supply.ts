@@ -7,28 +7,34 @@ import { fullRangeReserves } from "./v4math";
 
 const ZERO = "0x0000000000000000000000000000000000000000" as const;
 
-/** Snapshot supply (brief §4B/§5.3): satu multicall untuk semua balanceOf + totalSupply.
+/** Snapshot supply (brief §4B/§5.3): satu putaran readContract paralel untuk semua balanceOf + totalSupply.
  *  Dipanggil cron; halaman hanya membaca supply_snapshots (tanpa RPC di jalur request). */
 export async function takeSupplySnapshot() {
   const token = ADDRESSES.wageToken;
-  const bal = (a: `0x${string}`) => ({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [a] }) as const;
 
-  const contracts = [
-    { address: token, abi: ERC20_ABI, functionName: "totalSupply" } as const,
-    bal(ADDRESSES.furnace),
-    bal(ZERO),
-    bal(PONS.launchLocker),
-    bal(ADDRESSES.strongbox),
-    bal(ADDRESSES.splitter),
-    bal(ADDRESSES.lampOilTreasury),
-    bal(ADDRESSES.titheTreasury),
-    bal(PONS.poolManager), // hanya untuk penjaga estimasi LP (bukan bucket)
-    ...(OPEN_ITEMS.wageCurve ? [bal(OPEN_ITEMS.wageCurve)] : []),
+  // Satu putaran readContract paralel (bukan multicall): definisi chain Robinhood tidak memuat alamat
+  // Multicall3, sehingga publicClient.multicall() gagal ("chain does not support multicall3").
+  const read = (a?: `0x${string}`): Promise<bigint> =>
+    a
+      ? (publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [a] }) as Promise<bigint>)
+      : (publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "totalSupply" }) as Promise<bigint>);
+
+  const addrs = [
+    undefined, // totalSupply
+    ADDRESSES.furnace,
+    ZERO,
+    PONS.launchLocker,
+    ADDRESSES.strongbox,
+    ADDRESSES.splitter,
+    ADDRESSES.lampOilTreasury,
+    ADDRESSES.titheTreasury,
+    PONS.poolManager, // hanya untuk penjaga estimasi LP (bukan bucket)
+    ...(OPEN_ITEMS.wageCurve ? [OPEN_ITEMS.wageCurve] : []),
   ];
 
   const [block, res] = await Promise.all([
     publicClient.getBlockNumber(),
-    publicClient.multicall({ contracts, allowFailure: false }),
+    Promise.all(addrs.map((a) => read(a))),
   ]);
   const r = res as bigint[];
   const [total, burnedDead, burnedZero, locker, strongbox, splitter, lamp, tithe, poolManagerWage] = r;

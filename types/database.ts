@@ -28,6 +28,13 @@ export interface WageSplitResult {
   stakerCount: number;
 }
 
+/** Hasil weighhouse_flow() (0014_weighhouse.sql). Jumlah = string base unit (18 desimal). */
+export interface WeighhouseFlowRaw {
+  locked: string; sealed: string; refunded: string;
+  patrons: string; lampOil: string; tithe: string; furnaceBooked: string; burned: string;
+  jobsPosted: number; jobsSealed: number; jobsRefunded: number; jobsDisputed: number;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -81,6 +88,8 @@ export interface Database {
           /** Rating 1-5 dari client saat set-the-seal (0007_job_rating.sql).
            *  null kalau belum di-rate (termasuk semua job sebelum 'paid'). */
           rating: number | null;
+          /** keccak256(bytes(uuid)) -- jobId on-chain (0014_weighhouse.sql). null = job simulasi. */
+          chain_job_id: string | null;
           created_at: string;
         };
         Insert: Partial<Database['public']['Tables']['jobs']['Row']> & {
@@ -155,6 +164,60 @@ export interface Database {
         };
         Update: Partial<Database['public']['Tables']['wage_splits']['Row']>;
       };
+      chain_events: {
+        Relationships: [];
+        Row: {
+          tx_hash: string;
+          log_index: number;
+          block_number: number;
+          block_time: string;
+          contract: string;
+          event: string;
+          chain_job_id: string | null;
+          /** numeric(78,0) -- PostgREST mengirimnya sebagai number/string; pakai BigInt(String(x)). */
+          amount: string | number | null;
+          args: Record<string, unknown>;
+        };
+        Insert: Database['public']['Tables']['chain_events']['Row'];
+        Update: Partial<Database['public']['Tables']['chain_events']['Row']>;
+      };
+      price_snapshots: {
+        Relationships: [];
+        Row: {
+          taken_at: string;
+          price_usd: number | null;
+          price_eth: number | null;
+          liquidity_usd: number | null;
+          volume_wage: string | number | null;
+          source: string;
+        };
+        Insert: Database['public']['Tables']['price_snapshots']['Row'];
+        Update: Partial<Database['public']['Tables']['price_snapshots']['Row']>;
+      };
+      supply_snapshots: {
+        Relationships: [];
+        Row: {
+          taken_at: string;
+          block_number: number;
+          total: string | number | null;
+          burned: string | number | null;
+          curve: string | number | null;
+          lp: string | number | null;
+          locker: string | number | null;
+          strongbox: string | number | null;
+          splitter: string | number | null;
+          treasuries: string | number | null;
+          circulating: string | number | null;
+        };
+        Insert: Database['public']['Tables']['supply_snapshots']['Row'];
+        Update: Partial<Database['public']['Tables']['supply_snapshots']['Row']>;
+      };
+      indexer_state: {
+        Relationships: [];
+        Row: { key: string; last_block: number };
+        Insert: { key: string; last_block: number };
+        Update: Partial<{ key: string; last_block: number }>;
+      };
       job_events: {
         Relationships: [];
         Row: {
@@ -194,6 +257,30 @@ export interface Database {
         };
         /** null = job tidak punya Wright, belum 'paid', atau sudah pernah dicatat. */
         Returns: WageSplitResult | null;
+      };
+      weighhouse_flow: {
+        Args: { p_since: string | null };
+        Returns: WeighhouseFlowRaw;
+      };
+      weighhouse_swap_volume: {
+        Args: { p_since: string | null };
+        Returns: string;
+      };
+      /** 0015_weighhouse_market.sql -- volume WAGE curve + pool v4 (penyebut Work Ratio). */
+      weighhouse_trade_volume: {
+        Args: { p_since: string | null };
+        Returns: { curve: string; pool: string; trades: number };
+      };
+      weighhouse_burn_daily: {
+        Args: { p_since: string | null };
+        Returns: { day: string; burned: string }[];
+      };
+      weighhouse_top_buildings: {
+        Args: { p_since: string | null; p_limit: number };
+        Returns: {
+          agent_id: string; name: string; code: string; district: DistrictId;
+          sealed: string; jobs: number; staked: number; rating: number | null;
+        }[];
       };
     };
     Enums: Record<string, never>;

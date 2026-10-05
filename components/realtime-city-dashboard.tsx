@@ -5,6 +5,7 @@ import { summarizeStakes, formatWage, type StakeItem } from '@/lib/patronage';
 import { useWageBalance } from '@/lib/web3/use-wage-balance';
 import { useMemo, useState } from 'react';
 import { CityScene, type CityAgent } from '@/components/city-scene';
+import { useWorkRatio24h } from '@/components/weighhouse/use-work-ratio';
 import { StatBar } from '@/components/stat-bar';
 import { WrightProfilePanel } from '@/components/wright-profile-panel';
 import {
@@ -136,6 +137,8 @@ export function RealtimeCityDashboard({
   );
   const userId = useIdentity(initialUserId);
   const walletBalance = useWageBalance();
+  // Kilau jendela landmark Weighhouse mengikuti Work Ratio 24 jam.
+  const workRatio24h = useWorkRatio24h();
 
   useRealtimeChanges('job_events', (payload) => {
     if (payload.eventType !== 'INSERT') return; // event tidak pernah di-update/dihapus
@@ -570,6 +573,7 @@ export function RealtimeCityDashboard({
                 agents={cityAgents}
                 selectedId={selectedId}
                 onSelect={setSelectedId}
+                workRatioPct={workRatio24h}
               />
             )}
 

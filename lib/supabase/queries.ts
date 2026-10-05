@@ -1,5 +1,6 @@
 import { WAGE_SPLIT, WAGE_UNIT } from '@/lib/currency';
 import { formatWage } from '@/lib/patronage';
+import { computeJobId } from '@/lib/web3/strongbox';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/types/database';
 import type { DistrictId, JobStatus } from '@/types/enums';
@@ -274,6 +275,8 @@ export async function createJob(
       ...(input.agentId ? { agent_id: input.agentId } : {}),
       client_id: clientId,
       escrow_tx: input.escrowTx ?? null,
+      // Weighhouse: jobId on-chain, supaya ledger bisa menaut event -> job (0014_weighhouse.sql).
+      chain_job_id: input.escrowTx && input.id ? computeJobId(input.id) : null,
       status: 'open',
       progress: 0,
     })

@@ -35,7 +35,9 @@ export function useRealtimeChanges<T extends TableName>(
   // yang re-render dengan closure baru (state ledger/jobs berubah tiap
   // event masuk) tidak memicu unsubscribe/subscribe ulang ke channel.
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  useEffect(() => {
+    onChangeRef.current = onChange; // diperbarui setelah render (bukan saat render)
+  });
 
   useEffect(() => {
     const channel = supabase
@@ -52,6 +54,5 @@ export function useRealtimeChanges<T extends TableName>(
     return () => {
       supabase.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- onChange sengaja di luar deps, lihat onChangeRef
   }, [supabase, table, filter]);
 }

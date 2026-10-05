@@ -8,6 +8,11 @@ import { createClient } from "@/lib/supabase/client";
 import { isWeb3Configured } from "@/lib/web3/config";
 import { isOnChainEscrowConfigured } from "@/lib/web3/strongbox";
 
+// NEXT_PUBLIC_* ditanam saat build, jadi nilainya konstan: cukup dihitung sekali, tidak perlu effect + setState.
+const hasSupabaseEnv =
+  !!process.env.NEXT_PUBLIC_SUPABASE_URL &&
+  !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
 type Check = {
   label: string;
   status: "ok" | "checking" | "fail";
@@ -18,8 +23,16 @@ export function StatusCheck() {
   const [checks, setChecks] = useState<Check[]>([
     { label: "Tailwind", status: "ok" },
     { label: "Framer Motion", status: "ok" },
-    { label: "Supabase env", status: "checking" },
-    { label: "Supabase connection", status: "checking" },
+    {
+      label: "Supabase env",
+      status: hasSupabaseEnv ? "ok" : "fail",
+      detail: hasSupabaseEnv ? undefined : "isi .env.local dari .env.local.example",
+    },
+    {
+      label: "Supabase connection",
+      status: hasSupabaseEnv ? "checking" : "fail",
+      detail: hasSupabaseEnv ? undefined : "dilewati, env belum diisi",
+    },
     {
       label: "Wallet connect env",
       status: isWeb3Configured ? "ok" : "fail",
@@ -40,32 +53,7 @@ export function StatusCheck() {
   ]);
 
   useEffect(() => {
-    const hasEnv =
-      !!process.env.NEXT_PUBLIC_SUPABASE_URL &&
-      !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-    setChecks((prev) =>
-      prev.map((c) =>
-        c.label === "Supabase env"
-          ? {
-              ...c,
-              status: hasEnv ? "ok" : "fail",
-              detail: hasEnv ? undefined : "isi .env.local dari .env.local.example",
-            }
-          : c
-      )
-    );
-
-    if (!hasEnv) {
-      setChecks((prev) =>
-        prev.map((c) =>
-          c.label === "Supabase connection"
-            ? { ...c, status: "fail", detail: "dilewati, env belum diisi" }
-            : c
-        )
-      );
-      return;
-    }
+    if (!hasSupabaseEnv) return;
 
     const supabase = createClient();
     supabase.auth

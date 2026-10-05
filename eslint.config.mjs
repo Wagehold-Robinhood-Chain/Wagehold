@@ -3,6 +3,7 @@
 import coreWebVitals from "eslint-config-next/core-web-vitals";
 import typescript from "eslint-config-next/typescript";
 
-const eslintConfig = [...coreWebVitals, ...typescript];
+// contracts/ berisi Foundry + pustaka pihak ketiga (OpenZeppelin dll.) -- bukan kode app, jangan di-lint.
+const eslintConfig = [{ ignores: ["contracts/**"] }, ...coreWebVitals, ...typescript];
 
 export default eslintConfig;

@@ -14,9 +14,9 @@ import {MockUSDC} from "../test/mocks/MockUSDC.sol";
 /// Testnet / local (key in .env, roles default to the deployer):
 ///   forge script script/Deploy.s.sol --rpc-url robinhood_testnet --broadcast
 ///
-/// Mainnet (Robinhood Chain, id 4663) -- Ledger, no private key on disk:
+/// Mainnet (Robinhood Chain, id 4663) -- keystore or Ledger, no private key on disk:
 ///   forge script script/Deploy.s.sol --rpc-url robinhood_mainnet \
-///     --ledger --sender 0xALAMAT_LEDGER --broadcast
+///     --account wagehold-deployer --sender 0xALAMAT_DEPLOYER --broadcast
 ///   (leave DEPLOYER_PRIVATE_KEY unset)
 ///
 /// Mainnet guards: WAGE_TOKEN_ADDRESS must be a deployed contract (never MockUSDC), and
@@ -36,7 +36,7 @@ contract Deploy is Script {
         external
         returns (WageholdStrongbox strongbox, WageholdSplitter splitter, address wageToken)
     {
-        // Optional: unset => Ledger / keystore flags on the command line sign instead.
+        // Optional: unset => --account / --ledger on the command line sign instead.
         uint256 deployerKey = vm.envOr("DEPLOYER_PRIVATE_KEY", uint256(0));
         address deployer = deployerKey != 0 ? vm.addr(deployerKey) : msg.sender;
 

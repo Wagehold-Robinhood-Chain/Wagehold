@@ -1,12 +1,12 @@
 import { createClient } from '@/lib/supabase/server';
 import { getInitialUserId } from '@/lib/identity/server';
+import { createServiceRoleClient } from '@/lib/supabase/server';
 import {
-  getWageSplitTotals,
+  getBurnedTotal,
+  getCountingHouse,
   listAgents,
   listJobs,
-  listPayoutsByStaker,
   listRecentEvents,
-  listStakes,
 } from '@/lib/supabase/queries';
 import { RealtimeCityDashboard } from '@/components/realtime-city-dashboard';
 
@@ -17,20 +17,16 @@ export const revalidate = 0;
 export default async function Home() {
   const supabase = await createClient();
 
-  const [initialUserId, agentsRes, jobsRes, events, stakes, totals] =
+  const [initialUserId, agentsRes, jobsRes, events, burned, countingHouse] =
     await Promise.all([
       getInitialUserId(),
       listAgents(supabase),
       listJobs(supabase),
       listRecentEvents(supabase, 20),
-      listStakes(supabase),
-      getWageSplitTotals(supabase),
+      getBurnedTotal(supabase),
+      // Counting House dari chain (0020). Gagal -> null, dashboard menampilkan "—".
+      getCountingHouse(createServiceRoleClient()).catch(() => null),
     ]);
-  // Feed pribadi "You earned ..." (mode simulasi: identitas sudah dikenal di server;
-  // mode wallet: hanya lewat Realtime setelah wallet terhubung).
-  const payouts = initialUserId
-    ? await listPayoutsByStaker(supabase, initialUserId, 10)
-    : [];
 
   const agents = agentsRes.data ?? [];
   const jobs = jobsRes.data ?? [];
@@ -63,9 +59,7 @@ export default async function Home() {
         escrowTx: j.escrow_tx,
         rating: j.rating,
       }))}
-      initialStakes={stakes}
-      initialTotals={totals}
-      initialPayouts={payouts}
+      initialTotals={{ burned, treasury: countingHouse?.total ?? null }}
       initialEvents={events.map((e) => ({
         id: e.id,
         jobId: e.job_id,

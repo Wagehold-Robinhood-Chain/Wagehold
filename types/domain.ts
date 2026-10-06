@@ -21,7 +21,7 @@ export interface AgentSummary {
 export interface AgentDetail extends AgentSummary {
   description: string;
   /** Jumlah patron = staker $WAGE yang stake-nya > 0 di bangunan ini
-   *  (turunan tabel `stakes`, bukan lagi kolom demo `agents.holders`). */
+   *  (dari indexer on-chain: `building_pools.patron_count`). */
   stakerCount: number;
   /** Total WAGE yang di-stake patron di bangunan ini. */
   stakedWage: number;

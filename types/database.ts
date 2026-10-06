@@ -16,16 +16,45 @@
 
 import type { DistrictId, JobStatus, Rank } from '@/types/enums';
 
-/** Hasil record_wage_split() (0013_stakes_furnace_bond.sql). */
+/** Hasil record_wage_split() (ditulis ulang di 0020: tanpa pembagian ke staker simulasi). */
 export interface WageSplitResult {
   gross: number;
   patrons: number;
   lampOil: number;
   tithe: number;
   furnace: number;
-  distributed: number;
-  treasuryRedirect: number;
-  stakerCount: number;
+}
+
+/** Hasil counting_house_totals() (0020). Semua jumlah = string base unit (18 desimal). */
+export interface CountingHouseRaw {
+  tithe: string;
+  redirected: string;
+  total: string;
+}
+
+/** Hasil patronage_pools() (0018_patronage_onchain.sql). Semua jumlah = string base unit (18 desimal). */
+export interface PatronagePoolRaw {
+  agent_id: string; chain_agent_id: string; name: string; code: string; district: DistrictId;
+  registered: boolean; total_staked: string; patron_count: number;
+  rewards_total: string; redirected_total: string;
+  sealed_window: string; jobs_window: number; patron_cut_window: string; notified_window: string;
+}
+
+/** Hasil patronage_positions_of() (0018). `name`/`agent_id` null = bangunan belum dipetakan (agents.chain_agent_id kosong). */
+export interface PatronagePositionRaw {
+  chain_agent_id: string; agent_id: string | null; name: string | null; code: string | null; district: DistrictId | null;
+  staked: string; cooling: string; unlock_at: string | null; claimed_total: string; updated_block: number;
+}
+
+/** Hasil patronage_pool_rewards() (0018). kind: 'shared' = RewardNotified, 'redirected' = RewardRedirected. */
+export interface PatronageRewardRaw {
+  tx_hash: string; log_index: number; block_number: number; block_time: string;
+  kind: 'shared' | 'redirected'; amount: string; chain_job_id: string | null; job_id: string | null;
+}
+
+/** Hasil patronage_totals() (0018). */
+export interface PatronageTotalsRaw {
+  totalStaked: string; rewardsTotal: string; redirectedTotal: string; buildings: number; patrons: number;
 }
 
 /** Hasil weighhouse_flow() (0014_weighhouse.sql). Jumlah = string base unit (18 desimal). */
@@ -49,6 +78,8 @@ export interface Database {
           rank: Rank;
           description: string;
           wallet: string | null;
+          /** keccak256(bytes(id)) -- agentId on-chain (0018). Diisi scripts/patronage-backfill-agent-ids.ts. */
+          chain_agent_id?: string | null;
           token_address: string | null;
           system_prompt: string;
           tools: string[];
@@ -101,11 +132,25 @@ export interface Database {
         };
         Update: Partial<Database['public']['Tables']['jobs']['Row']>;
       };
+      /** 0020: satu baris penanda kapan simulasi Patronage dibekukan. */
+      patronage_cutover: {
+        Relationships: [];
+        Row: {
+          id: boolean;
+          frozen_at: string;
+          /** Blok chain saat dibekukan; null sampai diisi manual (PATRONAGE_4D.md). */
+          freeze_block: number | null;
+          note: string | null;
+        };
+        Insert: Partial<Database['public']['Tables']['patronage_cutover']['Row']>;
+        Update: Partial<Database['public']['Tables']['patronage_cutover']['Row']>;
+      };
+      /** FROZEN sejak 0020: simulasi, hanya-baca (riwayat). Sumber kebenaran on-chain = patron_positions. */
       stakes: {
         Relationships: [];
         Row: {
           id: string;
-          /** `sim:<hash>` (simulasi) atau alamat wallet lowercase -- sama dengan jobs.client_id. */
+          /** `sim:<hash>` (identitas browser simulasi) atau alamat wallet lowercase -- sama dengan jobs.client_id. */
           staker_id: string;
           agent_id: string;
           /** 0 = sudah menarik semua stake (baris dipertahankan untuk riwayat `earned`). */
@@ -148,8 +193,9 @@ export interface Database {
           lamp_oil: number;
           tithe: number;
           furnace: number;
-          /** Bagian patron yang tidak terbagi ke staker -> treasury. */
+          /** LEGACY (0013): bagian patron simulasi yang tidak terbagi. Selalu 0 sejak 0020. */
           treasury_redirect: number;
+          /** LEGACY (0013): jumlah staker simulasi saat seal. Selalu 0 sejak 0020. */
           staker_count: number;
           created_at: string;
         };
@@ -181,6 +227,27 @@ export interface Database {
         Insert: Database['public']['Tables']['chain_events']['Row'];
         Update: Partial<Database['public']['Tables']['chain_events']['Row']>;
       };
+      patron_positions: {
+        Relationships: [];
+        Row: {
+          agent_id: string; wallet: string;
+          /** numeric(78,0): jangan baca langsung (hilang presisi). Pakai patronage_positions_of(). */
+          staked: string | number; cooling: string | number; unlock_at: string | null;
+          claimed_total: string | number; updated_block: number;
+        };
+        Insert: Database['public']['Tables']['patron_positions']['Row'];
+        Update: Partial<Database['public']['Tables']['patron_positions']['Row']>;
+      };
+      building_pools: {
+        Relationships: [];
+        Row: {
+          agent_id: string; registered: boolean;
+          total_staked: string | number; patron_count: number;
+          rewards_total: string | number; redirected_total: string | number; updated_block: number;
+        };
+        Insert: Database['public']['Tables']['building_pools']['Row'];
+        Update: Partial<Database['public']['Tables']['building_pools']['Row']>;
+      };
       price_snapshots: {
         Relationships: [];
         Row: {
@@ -206,6 +273,8 @@ export interface Database {
           locker: string | number | null;
           strongbox: string | number | null;
           splitter: string | number | null;
+          /** Saldo kontrak Patronage (0019). null di snapshot lama = 0. */
+          patronage: string | number | null;
           treasuries: string | number | null;
           circulating: string | number | null;
         };
@@ -239,13 +308,10 @@ export interface Database {
     };
     Views: Record<string, never>;
     Functions: {
-      stake_wage: {
-        Args: { p_staker: string; p_agent: string; p_amount: number };
-        Returns: number;
-      };
-      unstake_wage: {
-        Args: { p_staker: string; p_agent: string; p_amount: number };
-        Returns: number;
+      /** 0020: Counting House dari chain_events (service role). */
+      counting_house_totals: {
+        Args: Record<string, never>;
+        Returns: CountingHouseRaw;
       };
       record_wage_split: {
         Args: {
@@ -275,11 +341,34 @@ export interface Database {
         Args: { p_since: string | null };
         Returns: { day: string; burned: string }[];
       };
+      /** 0018_patronage_onchain.sql */
+      patronage_apply: {
+        Args: { p_patronage: string; p_up_to: number };
+        /** jumlah event diproses; 0 = tidak ada yang baru; -1 = sedang dikerjakan proses lain. */
+        Returns: number;
+      };
+      patronage_pools: {
+        Args: { p_since: string | null };
+        Returns: PatronagePoolRaw[];
+      };
+      patronage_positions_of: {
+        Args: { p_wallet: string };
+        Returns: PatronagePositionRaw[];
+      };
+      patronage_pool_rewards: {
+        Args: { p_chain_agent_id: string; p_limit: number };
+        Returns: PatronageRewardRaw[];
+      };
+      patronage_totals: {
+        Args: Record<string, never>;
+        Returns: PatronageTotalsRaw;
+      };
       weighhouse_top_buildings: {
         Args: { p_since: string | null; p_limit: number };
         Returns: {
           agent_id: string; name: string; code: string; district: DistrictId;
-          sealed: string; jobs: number; staked: number; rating: number | null;
+          /** `staked` = total stake on-chain sekarang, string base unit (0019). */
+          sealed: string; jobs: number; staked: string; rating: number | null;
         }[];
       };
     };

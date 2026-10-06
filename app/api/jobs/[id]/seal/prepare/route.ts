@@ -78,7 +78,7 @@ export async function POST(
     .single();
 
   try {
-    const { state } = await preparePayeeOnChain(id, agent?.wallet);
+    const { state } = await preparePayeeOnChain(id, { id: job.agent_id, wallet: agent?.wallet });
     return NextResponse.json({ ok: true, state });
   } catch (err) {
     const message = err instanceof Error ? err.message : "unknown error";

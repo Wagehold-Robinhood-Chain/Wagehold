@@ -35,3 +35,9 @@ export const WAGE_SPLIT: RevenueSplitData = {
   tithePct: 10,
   furnacePct: 10,
 };
+
+/** "1,844 WAGE" -- sampai 2 desimal, tanpa nol di belakang. Untuk angka `number` (tampilan); jumlah on-chain
+ *  (bigint base unit) memakai formatWageUnits di lib/wage-format.ts. */
+export function formatWage(n: number): string {
+  return `${n.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${WAGE_UNIT}`;
+}

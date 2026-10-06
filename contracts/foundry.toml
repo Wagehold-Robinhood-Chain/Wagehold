@@ -29,3 +29,13 @@ robinhood_mainnet = "${ROBINHOOD_MAINNET_RPC_URL}"
 [etherscan]
 robinhood_testnet = { key = "${ROBINHOOD_VERIFIER_KEY}", chain = 46630, url = "https://explorer.testnet.chain.robinhood.com/api" }
 robinhood_mainnet = { key = "${ROBINHOOD_VERIFIER_KEY}", chain = 4663, url = "https://robinhoodchain.blockscout.com/api" }
+
+# Patronage brief section 6: fuzz >= 10,000 runs; invariant campaigns drive random
+# stake/unstake/withdraw/claim/notify sequences across 3 buildings and 5 patrons.
+[fuzz]
+runs = 10000
+
+[invariant]
+runs = 1000
+depth = 100
+fail_on_revert = false

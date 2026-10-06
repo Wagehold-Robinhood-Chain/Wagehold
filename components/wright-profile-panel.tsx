@@ -1,6 +1,6 @@
 'use client';
 
-import { WAGE_SPLIT, WAGE_UNIT } from '@/lib/currency';
+import { WAGE_SPLIT, WAGE_UNIT, formatWage } from '@/lib/currency';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'motion/react';
 import { Panel, PanelHeader, PanelScroll } from '@/components/ui/panel';
@@ -12,8 +12,7 @@ import { StatusPill } from '@/components/ui/status-pill';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { RevenueSplit } from '@/components/revenue-split';
 import { BondLine, PatronageSection } from '@/components/patronage-section';
-import type { PatronageSummary } from '@/lib/patronage';
-import { formatWage } from '@/lib/patronage';
+import { SimulationHistory } from '@/components/simulation-history';
 import { cn } from '@/lib/cn';
 import { RANK_LABEL, WARD_COLOR_HEX, WARD_LABEL } from '@/types/domain';
 import type { AgentDetail, JobSummary } from '@/types/domain';
@@ -35,16 +34,14 @@ export function WrightProfilePanel({
   agent,
   currentJob,
   sealedJobs,
-  patronage,
-  canIdentify,
+  viewerId,
   className,
 }: {
   agent: AgentDetail | null;
   currentJob: JobSummary | null;
   sealedJobs: JobSummary[];
-  /** Ringkasan stake bangunan ini + stake/earned user yang sedang melihat. */
-  patronage: PatronageSummary;
-  canIdentify: boolean;
+  /** Identitas pengunjung (browser simulasi / wallet) -- untuk baris "Yours" di Simulation history. */
+  viewerId: string | null;
   className?: string;
 }) {
   return (
@@ -176,17 +173,9 @@ export function WrightProfilePanel({
 
               <div className="flex flex-col gap-2 border-b border-line px-3.5 py-3">
                 <SectionLabel>Patronage</SectionLabel>
-                <PatronageSection
-                  agentId={agent.id}
-                  isLead={agent.isLead}
-                  stakedWage={patronage.stakedWage}
-                  stakerCount={patronage.stakerCount}
-                  myStake={patronage.myStake}
-                  myEarned={patronage.myEarned}
-                  mySharePct={patronage.mySharePct}
-                  canIdentify={canIdentify}
-                />
+                <PatronageSection agentId={agent.id} isLead={agent.isLead} />
                 <BondLine bondWage={agent.bondWage} />
+                <SimulationHistory agentId={agent.id} initialUserId={viewerId} />
               </div>
 
               <div className="flex flex-col gap-1.5 border-b border-line px-3.5 py-3">

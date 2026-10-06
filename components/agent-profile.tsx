@@ -1,4 +1,4 @@
-import { WAGE_SPLIT, WAGE_UNIT } from '@/lib/currency';
+import { WAGE_SPLIT, WAGE_UNIT, formatWage } from '@/lib/currency';
 import Link from 'next/link';
 import { JobCard } from '@/components/job-card';
 import { RevenueSplit } from '@/components/revenue-split';
@@ -10,20 +10,18 @@ import { Button } from '@/components/ui/button';
 import { StatusPill } from '@/components/ui/status-pill';
 import { StatBar } from '@/components/stat-bar';
 import { BondLine, PatronageSection } from '@/components/patronage-section';
-import { formatWage, type PatronageSummary } from '@/lib/patronage';
+import { SimulationHistory } from '@/components/simulation-history';
 import { WARD_LABEL, RANK_LABEL } from '@/types/domain';
 import type { AgentDetail, JobSummary } from '@/types/domain';
 
 export function AgentProfile({
   agent,
   sealedJobs,
-  patronage,
-  canIdentify,
+  viewerId,
 }: {
   agent: AgentDetail;
   sealedJobs: JobSummary[];
-  patronage: PatronageSummary;
-  canIdentify: boolean;
+  viewerId: string | null;
 }) {
   return (
     <div className="flex flex-col gap-3">
@@ -95,17 +93,9 @@ export function AgentProfile({
           <h3 className="text-[11px] uppercase tracking-wider text-faint">
             Patronage
           </h3>
-          <PatronageSection
-            agentId={agent.id}
-            isLead={agent.isLead}
-            stakedWage={patronage.stakedWage}
-            stakerCount={patronage.stakerCount}
-            myStake={patronage.myStake}
-            myEarned={patronage.myEarned}
-            mySharePct={patronage.mySharePct}
-            canIdentify={canIdentify}
-          />
+          <PatronageSection agentId={agent.id} isLead={agent.isLead} />
           <BondLine bondWage={agent.bondWage} />
+          <SimulationHistory agentId={agent.id} initialUserId={viewerId} />
         </div>
       </Panel>
 

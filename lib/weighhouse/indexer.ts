@@ -1,8 +1,10 @@
 import type { Log } from "viem";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { weighhouseClient as publicClient } from "./rpc";
-import { ADDRESSES, OPEN_ITEMS, PONS } from "@/lib/web3/addresses";
-import { CURVE_EVENTS, POOL_GRADUATED_EVENT, POOL_SWAP_EVENT, SPLITTER_EVENTS, STRONGBOX_EVENTS } from "./events";
+import { ADDRESSES, OPEN_ITEMS, PATRONAGE, PONS } from "@/lib/web3/addresses";
+import {
+  CURVE_EVENTS, PATRONAGE_EVENTS, POOL_GRADUATED_EVENT, POOL_SWAP_EVENT, SPLITTER_EVENTS, SPLITTER_V2_EVENTS, STRONGBOX_EVENTS,
+} from "./events";
 import { wagePoolKey } from "./pons";
 
 const WORK_STATE_KEY = "chain_events"; // Strongbox + Splitter (kunci lama dipertahankan: dipakai halaman)
@@ -25,7 +27,8 @@ function toRow(log: Log & { eventName?: string; args?: Record<string, unknown> }
   if (!log.eventName || !log.args || !log.transactionHash || log.logIndex == null || log.blockNumber == null) return null;
   const a = log.args as Record<string, bigint | string>;
   const args: Record<string, string> = {};
-  for (const [k, v] of Object.entries(a)) args[k] = s(v);
+  // agentId selalu lowercase: patronage_apply() dan indeks chain_events_agent_idx membandingkannya apa adanya.
+  for (const [k, v] of Object.entries(a)) args[k] = k === "agentId" ? s(v).toLowerCase() : s(v);
 
   let amount: bigint | null = null;
   switch (log.eventName) {
@@ -42,6 +45,11 @@ function toRow(log: Log & { eventName?: string; args?: Record<string, unknown> }
       amount = abs((wagePoolKey().wageIsToken0 ? a.amount0 : a.amount1) as bigint); break;
     }
     case "PoolGraduated": amount = a.tokenAmount as bigint; break; // momen graduation (garis vertikal grafik harga)
+    // Patronage (contract = alamat WageholdPatronage; lihat PATRONAGE_EVENTS di events.ts).
+    case "Staked": case "UnstakeRequested": case "Withdrawn": case "Claimed":
+    case "RewardNotified": case "RewardRedirected": case "RedirectFlushed":
+      amount = a.amount as bigint; break;
+    case "BuildingRegistered": amount = null; break;
     case "SealBroken": amount = null; break;
     default: return null;
   }
@@ -64,6 +72,28 @@ function workLogs(from: bigint, to: bigint): Promise<Log[]>[] {
   return [
     publicClient.getLogs({ address: ADDRESSES.strongbox, events: STRONGBOX_EVENTS, fromBlock: from, toBlock: to }),
     publicClient.getLogs({ address: ADDRESSES.splitter, events: SPLITTER_EVENTS, fromBlock: from, toBlock: to }),
+  ];
+}
+
+/** Aliran 3: event kerja Patronage build (Strongbox v2 + Splitter v2). Signature event Strongbox v2 identik
+ *  dengan v1, jadi ABI-nya dipakai ulang; Splitter v2 memakai ABI sendiri (agentId menggantikan patronPool).
+ *  Cursor-nya terpisah dari aliran "chain_events" (v1): kontrak v2 dibuat belakangan, jadi menambahkan
+ *  alamatnya ke aliran lama akan melewatkan event di belakang cursor-nya. */
+function v2WorkLogs(from: bigint, to: bigint): Promise<Log[]>[] {
+  const calls: Promise<Log[]>[] = [];
+  if (PATRONAGE.strongboxV2) {
+    calls.push(publicClient.getLogs({ address: PATRONAGE.strongboxV2, events: STRONGBOX_EVENTS, fromBlock: from, toBlock: to }) as unknown as Promise<Log[]>);
+  }
+  if (PATRONAGE.splitterV2) {
+    calls.push(publicClient.getLogs({ address: PATRONAGE.splitterV2, events: SPLITTER_V2_EVENTS, fromBlock: from, toBlock: to }) as unknown as Promise<Log[]>);
+  }
+  return calls;
+}
+
+/** Aliran 4: event WageholdPatronage. Hanya dipanggil kalau PATRONAGE.patronage terisi. */
+function patronageLogs(from: bigint, to: bigint): Promise<Log[]>[] {
+  return [
+    publicClient.getLogs({ address: PATRONAGE.patronage!, events: PATRONAGE_EVENTS, fromBlock: from, toBlock: to }) as unknown as Promise<Log[]>,
   ];
 }
 
@@ -132,6 +162,27 @@ async function runStream(
   return { ok: true as const, key, indexedTo: Number(from - 1n), inserted, caughtUp: from > target };
 }
 
+/** Patronage: tulis event mentah ke chain_events, lalu turunkan patron_positions / building_pools lewat
+ *  patronage_apply() (0018) HANYA sampai blok yang event-nya sudah tertulis penuh (`indexedTo`).
+ *  Kunci cursor memuat alamat kontrak, jadi mengganti alamat (kontrak baru) memulai ulang dari
+ *  WEIGHHOUSE_PATRONAGE_DEPLOY_BLOCK tanpa event terlewat. */
+async function runPatronage(db: Db, latest: bigint) {
+  if (!PATRONAGE.patronage || PATRONAGE.deployBlock === undefined) {
+    return { ok: true as const, skipped: "WEIGHHOUSE_PATRONAGE_ADDRESS / WEIGHHOUSE_PATRONAGE_DEPLOY_BLOCK belum diisi" };
+  }
+  const start = PATRONAGE.deployBlock;
+  const workV2 =
+    PATRONAGE.strongboxV2 || PATRONAGE.splitterV2
+      ? await runStream(db, `v2:${PATRONAGE.strongboxV2 ?? "-"}:${PATRONAGE.splitterV2 ?? "-"}`, start, latest, v2WorkLogs)
+      : null;
+  const events = await runStream(db, `patronage:${PATRONAGE.patronage}`, start, latest, patronageLogs);
+  if (!events.ok) return { ok: false as const, workV2, events };
+
+  const { data, error } = await db.rpc("patronage_apply", { p_patronage: PATRONAGE.patronage, p_up_to: events.indexedTo });
+  if (error) return { ok: false as const, workV2, events, error: error.message };
+  return { ok: workV2?.ok ?? true, workV2, events, applied: data };
+}
+
 /** Satu putaran indexer untuk kedua aliran. Cursor aliran pasar memuat konfigurasinya (curve + pool),
  *  jadi mengisi WEIGHHOUSE_WAGE_CURVE belakangan memulai ulang aliran itu dari blok awal -- tanpa event terlewat. */
 export async function runIndexer() {
@@ -146,11 +197,13 @@ export async function runIndexer() {
 
   const work = await runStream(db, WORK_STATE_KEY, OPEN_ITEMS.deployBlock, latest, workLogs);
   const market = await runStream(db, marketKey, marketStart, latest, marketLogs);
+  const patronage = await runPatronage(db, latest);
 
   return {
-    ok: work.ok && market.ok,
+    ok: work.ok && market.ok && patronage.ok,
     latest: Number(latest),
     work,
+    patronage,
     market: { ...market, curveConfigured: !!OPEN_ITEMS.wageCurve },
   };
 }

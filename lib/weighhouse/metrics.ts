@@ -2,6 +2,7 @@ import { createServiceRoleClient } from '@/lib/supabase/server';
 import {
   ADDRESSES,
   OPEN_ITEMS,
+  PATRONAGE,
   PONS,
   WAGE_TOTAL_SUPPLY_CAP,
 } from '@/lib/web3/addresses';
@@ -48,6 +49,24 @@ export interface SupplyBucket {
   note?: string;
 }
 
+/** Total Patronage semua bangunan, SEMUA WAKTU (bukan jendela `window`), satuan WAGE utuh. */
+export interface PatronageSummary {
+  /** WEIGHHOUSE_PATRONAGE_ADDRESS terisi. false = kartu menampilkan "belum live", bukan angka 0. */
+  configured: boolean;
+  /** Total terbaca dari indexer. false (dengan configured true) = indexer/DB belum siap. */
+  ok: boolean;
+  /** Stake aktif sekarang (turunan event Staked/UnstakeRequested). */
+  stakedWage: number;
+  /** Σ reward yang benar-benar dibagi ke patron (RewardNotified). */
+  rewardsPaidWage: number;
+  /** Σ reward yang dialihkan ke treasury karena tidak ada staker (RewardRedirected). */
+  redirectedWage: number;
+  /** Wallet berbeda dengan stake > 0. */
+  patrons: number;
+  /** Bangunan terdaftar. */
+  buildings: number;
+}
+
 export interface Summary {
   window: Win;
   generatedAt: string;
@@ -69,8 +88,8 @@ export interface Summary {
     tradeVolumeSource: 'on-chain' | 'none';
     tradeVolume: { curveWage: number; poolWage: number; trades: number };
   };
-  /** Total $WAGE yang di-stake patron (simulasi, tabel `stakes`, satuan WAGE utuh). */
-  stakedByPatrons: number;
+  /** Patronage on-chain (Dev Brief §8.3): total stake dan reward patron dari indexer (building_pools, 0018). */
+  patronage: PatronageSummary;
   supply: {
     updatedAt: string | null;
     blockNumber: number | null;
@@ -107,23 +126,32 @@ export interface Summary {
   indexer: { lastBlock: number | null };
 }
 
-/** Jumlah stake aktif semua patron (tabel `stakes`). Dibaca per halaman 1000 baris karena PostgREST
- *  membatasi satu respons; agregat SQL (`sum()`) sengaja tidak dipakai agar tidak bergantung pada setelan project. */
-async function sumStakes(): Promise<number> {
-  const db = createServiceRoleClient();
-  let total = 0;
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await db
-      .from('stakes')
-      .select('amount')
-      .gt('amount', 0)
-      .order('id')
-      .range(from, from + 999);
-    if (error || !data) break;
-    for (const r of data) total += Number(r.amount) || 0;
-    if (data.length < 1000) break;
-  }
-  return total;
+/** Total Patronage on-chain dari `patronage_totals()` (0018): stake aktif, reward yang dibagi, reward yang dialihkan.
+ *  Data berasal dari indexer, jadi tertinggal beberapa menit. */
+async function readPatronageSummary(
+  db: ReturnType<typeof createServiceRoleClient>,
+): Promise<PatronageSummary> {
+  const off: PatronageSummary = {
+    configured: !!PATRONAGE.patronage,
+    ok: false,
+    stakedWage: 0,
+    rewardsPaidWage: 0,
+    redirectedWage: 0,
+    patrons: 0,
+    buildings: 0,
+  };
+  if (!PATRONAGE.patronage) return off;
+  const { data, error } = await db.rpc('patronage_totals');
+  if (error || !data) return off;
+  return {
+    configured: true,
+    ok: true,
+    stakedWage: wageNum(data.totalStaked),
+    rewardsPaidWage: wageNum(data.rewardsTotal),
+    redirectedWage: wageNum(data.redirectedTotal),
+    patrons: Number(data.patrons) || 0,
+    buildings: Number(data.buildings) || 0,
+  };
 }
 
 export async function getSummary(win: Win): Promise<Summary> {
@@ -142,7 +170,7 @@ export async function getSummary(win: Win): Promise<Summary> {
     allBurnRes,
     gradRes,
     stateRes,
-    stakedByPatrons,
+    patronage,
   ] = await Promise.all([
     db.rpc('weighhouse_flow', { p_since: since }),
     db.rpc('weighhouse_trade_volume', { p_since: since }),
@@ -185,7 +213,17 @@ export async function getSummary(win: Win): Promise<Summary> {
       .select('last_block')
       .eq('key', 'chain_events')
       .maybeSingle(),
-    sumStakes().catch(() => 0),
+    readPatronageSummary(db).catch(
+      (): PatronageSummary => ({
+        configured: !!PATRONAGE.patronage,
+        ok: false,
+        stakedWage: 0,
+        rewardsPaidWage: 0,
+        redirectedWage: 0,
+        patrons: 0,
+        buildings: 0,
+      }),
+    ),
   ]);
 
   const f = flowRes.data;
@@ -263,12 +301,29 @@ export async function getSummary(win: Win): Promise<Summary> {
       mk('locker', 'Pons locker', 'locked', big(sp.locker), [
         { label: 'Pons locker', address: PONS.launchLocker },
       ]),
+      // v1 + v2 dijumlah di satu bucket (supply.ts); tautan Blockscout memuat keduanya.
       mk('strongbox', 'Strongbox', 'escrow', big(sp.strongbox), [
         { label: 'Strongbox', address: ADDRESSES.strongbox },
+        ...(PATRONAGE.strongboxV2
+          ? [{ label: 'Strongbox v2', address: PATRONAGE.strongboxV2 }]
+          : []),
       ]),
       mk('splitter', 'Splitter', 'pending split / burn', big(sp.splitter), [
         { label: 'Splitter', address: ADDRESSES.splitter },
+        ...(PATRONAGE.splitterV2
+          ? [{ label: 'Splitter v2', address: PATRONAGE.splitterV2 }]
+          : []),
       ]),
+      // Saldo kontrak Patronage: stake aktif + cooldown + reward belum diklaim (snapshot lama: kolom NULL = 0).
+      mk(
+        'patronage',
+        'Patronage',
+        'staked + unclaimed rewards',
+        big(sp.patronage),
+        PATRONAGE.patronage
+          ? [{ label: 'Patronage', address: PATRONAGE.patronage }]
+          : undefined,
+      ),
       mk('treasuries', 'Treasuries', 'Lamp Oil + Tithe', big(sp.treasuries), [
         { label: 'Lamp Oil', address: ADDRESSES.lampOilTreasury },
         { label: 'Tithe', address: ADDRESSES.titheTreasury },
@@ -282,6 +337,7 @@ export async function getSummary(win: Win): Promise<Summary> {
       sp.locker,
       sp.strongbox,
       sp.splitter,
+      sp.patronage,
       sp.treasuries,
       sp.circulating,
     ].reduce<bigint>((a, v) => a + big(v), 0n);
@@ -351,7 +407,7 @@ export async function getSummary(win: Win): Promise<Summary> {
         trades: Number(tv.trades ?? 0),
       },
     },
-    stakedByPatrons,
+    patronage,
     supply,
     flow: {
       locked: wageNum(locked),
@@ -428,42 +484,76 @@ export async function getTopBuildings(win: Win) {
     ward: r.district,
     sealed: wageNum(r.sealed),
     jobs: Number(r.jobs),
-    staked: Number(r.staked),
+    // base unit (string, 0019) -> WAGE utuh; stake on-chain sekarang, bukan jendela waktu.
+    staked: wageNum(r.staked),
     rating: r.rating == null ? null : Number(r.rating),
   }));
 }
 
 export async function getLedger(limit = 50) {
-  const { data } = await createServiceRoleClient()
+  const db = createServiceRoleClient();
+  const { data } = await db
     .from('chain_events')
-    .select('tx_hash,log_index,block_time,contract,event,chain_job_id,amount')
+    .select(
+      'tx_hash,log_index,block_time,contract,event,chain_job_id,amount,args',
+    )
     .in('event', LEDGER_EVENT_NAMES)
     .order('block_time', { ascending: false })
     .order('log_index', { ascending: false })
     .limit(Math.min(Math.max(limit, 1), 100));
+  const rows = data ?? [];
+
   const ids = [
-    ...new Set(
-      (data ?? []).map((e) => e.chain_job_id).filter((x): x is string => !!x),
-    ),
+    ...new Set(rows.map((e) => e.chain_job_id).filter((x): x is string => !!x)),
   ];
   const jobs = ids.length
-    ? ((
-        await createServiceRoleClient()
-          .from('jobs')
-          .select('id,chain_job_id')
-          .in('chain_job_id', ids)
-      ).data ?? [])
+    ? ((await db.from('jobs').select('id,chain_job_id').in('chain_job_id', ids))
+        .data ?? [])
     : [];
   const map = new Map(jobs.map((j) => [j.chain_job_id, j.id]));
-  return (data ?? []).map((e) => ({
-    txHash: e.tx_hash,
-    logIndex: e.log_index,
-    at: e.block_time,
-    event: e.event,
-    kind: EVENT_KIND[e.event] ?? e.event,
-    amount: e.amount == null ? null : wageNum(e.amount),
-    jobId: e.chain_job_id ? (map.get(e.chain_job_id) ?? null) : null,
-  }));
+
+  // Event Patronage (dan JobSplit/JobRegistered Splitter v2) membawa args.agentId = bytes32 on-chain;
+  // dipetakan ke nama bangunan lewat agents.chain_agent_id (0018). Tidak terpetakan -> building null.
+  const chainAgentIds = [
+    ...new Set(
+      rows
+        .map((e) => (e.args as Record<string, unknown> | null)?.agentId)
+        .filter((x): x is string => typeof x === 'string' && /^0x[0-9a-f]{64}$/.test(x)),
+    ),
+  ];
+  const buildingRows = chainAgentIds.length
+    ? ((
+        await db
+          .from('agents')
+          .select('id,name,chain_agent_id')
+          .in('chain_agent_id', chainAgentIds)
+      ).data ?? [])
+    : [];
+  const buildingByChainId = new Map(
+    buildingRows.map((a) => [a.chain_agent_id, { id: a.id, name: a.name }]),
+  );
+
+  return rows.map((e) => {
+    const agentArg = (e.args as Record<string, unknown> | null)?.agentId;
+    return {
+      txHash: e.tx_hash,
+      logIndex: e.log_index,
+      at: e.block_time,
+      event: e.event,
+      kind: EVENT_KIND[e.event] ?? e.event,
+      amount: e.amount == null ? null : wageNum(e.amount),
+      // Staked membawa args.user (wallet patron); event lain tidak.
+      wallet:
+        typeof (e.args as Record<string, unknown> | null)?.user === 'string'
+          ? ((e.args as Record<string, unknown>).user as string)
+          : null,
+      jobId: e.chain_job_id ? (map.get(e.chain_job_id) ?? null) : null,
+      building:
+        typeof agentArg === 'string'
+          ? (buildingByChainId.get(agentArg) ?? null)
+          : null,
+    };
+  });
 }
 export type LedgerRow = Awaited<ReturnType<typeof getLedger>>[number];
 export type TopBuilding = Awaited<ReturnType<typeof getTopBuildings>>[number];

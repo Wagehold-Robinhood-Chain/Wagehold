@@ -1,0 +1,6 @@
+File berikut ada di repo lama dan sudah dihapus di 4D. Hapus dari repomu setelah menyalin zip ini:
+
+lib/patronage.ts
+app/api/agents/[id]/stake/route.ts   (hapus seluruh folder app/api/agents/[id]/stake)
+
+Urutan cut-over (migrasi 0018-0020 lalu deploy kode): lihat PATRONAGE_4D.md.

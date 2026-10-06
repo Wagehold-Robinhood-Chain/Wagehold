@@ -322,6 +322,8 @@ async function main() {
 
   // Wright & pihak luar: akun sekali-pakai. Wright perlu ETH sedikit untuk menarik (withdraw).
   const wrightAccount = privateKeyToAccount(generatePrivateKey());
+  // Bentuk yang dipakai preparePayeeOnChain sejak Patronage: { id (uuid agen), wallet }. `id` hanya dipakai pada build Patronage.
+  const wrightAgent = { id: randomUUID(), wallet: wrightAccount.address };
   const wrightW = wallet(wrightAccount);
   const outsider = privateKeyToAccount(generatePrivateKey());
   {
@@ -390,7 +392,7 @@ async function main() {
       pub.simulateContract({ account: outsider, address: strongbox, abi: SB, functionName: "setPayee", args: [jobId, outsider.address] }));
 
     // kode server app (POST /api/jobs/:id/seal/prepare)
-    const prep = await preparePayeeOnChain(uuid, wrightAccount.address);
+    const prep = await preparePayeeOnChain(uuid, wrightAgent);
     assertEq("preparePayeeOnChain → ready", prep.state, "ready");
     const jp = await getJob(jobId);
     assertEq("payee on-chain = Splitter", isAddressEqual(jp.payee, splitter!), true, { detail: jp.payee });
@@ -398,7 +400,7 @@ async function main() {
     assertEq("Splitter.registerJob: amount & Patron pool benar", sp.amount === amount && isAddressEqual(sp.patronPool, wrightAccount.address) && !sp.split, true);
 
     const nonce0 = await pub.getTransactionCount({ address: councilAccount.address });
-    const prep2 = await preparePayeeOnChain(uuid, wrightAccount.address);
+    const prep2 = await preparePayeeOnChain(uuid, wrightAgent);
     assertEq("preparePayeeOnChain idempoten (tak kirim tx baru)", prep2.state === "ready" && (await pub.getTransactionCount({ address: councilAccount.address })) === nonce0, true);
 
     // hanya client yang boleh menyegel
@@ -431,7 +433,7 @@ async function main() {
 
     const rel = await verifyReleased(uuid);
     assertEq("verifyReleased lulus, payee = Splitter", isAddressEqual(rel.payee, splitter!), true);
-    assertEq("preparePayeeOnChain setelah seal → already_released", (await preparePayeeOnChain(uuid, wrightAccount.address)).state, "already_released");
+    assertEq("preparePayeeOnChain setelah seal → already_released", (await preparePayeeOnChain(uuid, wrightAgent)).state, "already_released");
 
     // pullAndSplit (kode server app)
     const split = await splitAfterRelease(uuid);
@@ -485,8 +487,8 @@ async function main() {
     const jobId = computeJobId(uuid);
     await lockWage("kunci wage", uuid, amount);
 
-    await expectThrows("preparePayeeOnChain tanpa wallet Wright & tanpa Splitter → ditolak", /no wallet address and no Splitter/, () => preparePayeeOnChain(uuid, null));
-    assertEq("preparePayeeOnChain → ready", (await preparePayeeOnChain(uuid, wrightAccount.address)).state, "ready");
+    await expectThrows("preparePayeeOnChain tanpa wallet Wright & tanpa Splitter → ditolak", /no wallet address and no Splitter/, () => preparePayeeOnChain(uuid, { id: wrightAgent.id, wallet: null }));
+    assertEq("preparePayeeOnChain → ready", (await preparePayeeOnChain(uuid, wrightAgent)).state, "ready");
     assertEq("payee on-chain = wallet Wright", isAddressEqual((await getJob(jobId)).payee, wrightAccount.address), true);
 
     await send("client Set the seal → approve()", clientW, { address: strongbox, abi: SB, functionName: "approve", args: [jobId] });
@@ -573,7 +575,7 @@ async function main() {
     const uuid = randomUUID();
     const jobId = computeJobId(uuid);
     await lockWage("kunci wage", uuid, amount);
-    await preparePayeeOnChain(uuid, wrightAccount.address);
+    await preparePayeeOnChain(uuid, wrightAgent);
     await send("client dispute()", clientW, { address: strongbox, abi: SB, functionName: "dispute", args: [jobId] });
 
     const toPayee = (amount * BigInt(60)) / BigInt(100);

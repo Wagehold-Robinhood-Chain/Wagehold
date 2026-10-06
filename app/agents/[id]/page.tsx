@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { getInitialUserId } from '@/lib/identity/server';
-import { summarizeStakes } from '@/lib/patronage';
+import { getPool } from '@/lib/patronage-onchain';
+import { baseToWage } from '@/lib/patronage-city';
 import {
   deriveAgentStats,
   deriveRank,
@@ -12,7 +13,6 @@ import {
   listAgentsByDistrict,
   listJobsByAgent,
   listJobsByDistrict,
-  listStakes,
 } from '@/lib/supabase/queries';
 import { AgentProfile } from '@/components/agent-profile';
 import { SiteNav } from '@/components/site-nav';
@@ -35,13 +35,11 @@ export default async function AgentProfilePage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const [{ data: agentRow, error: agentError }, jobsRes, stakes, userId] =
-    await Promise.all([
-      getAgentById(supabase, id),
-      listJobsByAgent(supabase, id),
-      listStakes(supabase),
-      getInitialUserId(),
-    ]);
+  const [{ data: agentRow, error: agentError }, jobsRes, viewerId] = await Promise.all([
+    getAgentById(supabase, id),
+    listJobsByAgent(supabase, id),
+    getInitialUserId(),
+  ]);
 
   if (agentError || !agentRow) {
     notFound();
@@ -95,9 +93,14 @@ export default async function AgentProfilePage({
         })),
       );
 
-  // Patronage: pool bangunan ini + stake/earned milik pengunjung (mode simulasi: cookie
-  // browser; mode wallet: server tidak tahu siapa pengunjungnya, jadi 0).
-  const patronage = summarizeStakes(stakes, agentRow.id, userId);
+  // Patronage on-chain (Dev Brief §8.3): total stake dan jumlah patron bangunan ini dari indexer
+  // (tertinggal beberapa menit dari chain). Gagal / belum diindeks = 0, halaman tetap render.
+  // Angka live milik wallet pengunjung ada di panel Patronage (dibaca langsung dari kontrak).
+  const poolInfo = await getPool(agentRow.id, 1).catch(() => null);
+  const patronage = {
+    stakerCount: poolInfo?.pool.patronCount ?? 0,
+    stakedWage: poolInfo ? baseToWage(poolInfo.pool.totalStaked) : 0,
+  };
 
   const agent: AgentDetail = {
     id: agentRow.id,
@@ -153,8 +156,7 @@ export default async function AgentProfilePage({
           <AgentProfile
             agent={agent}
             sealedJobs={sealedJobs}
-            patronage={patronage}
-            canIdentify={!!userId}
+            viewerId={viewerId}
           />
         </div>
       </div>

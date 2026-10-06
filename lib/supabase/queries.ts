@@ -1,6 +1,6 @@
-import { WAGE_SPLIT, WAGE_UNIT } from '@/lib/currency';
-import { formatWage } from '@/lib/patronage';
+import { WAGE_SPLIT, WAGE_UNIT, formatWage } from '@/lib/currency';
 import { computeJobId } from '@/lib/web3/strongbox';
+import { parseCountingHouse, type CountingHouse } from '@/lib/counting-house';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/types/database';
 import type { DistrictId, JobStatus } from '@/types/enums';
@@ -69,55 +69,22 @@ export async function getAgentById(supabase: Client, id: string) {
   return supabase.from('agents').select('*').eq('id', id).single();
 }
 
-/** Semua stake patron (Patronage). Kecil untuk sekarang, jadi dimuat sekaligus
- *  dan diringkas per bangunan di klien (lib/patronage.ts). Kalau tabel `stakes`
- *  belum ada (migrasi 0013 belum jalan) hasilnya kosong, bukan error. */
-export async function listStakes(supabase: Client) {
-  const { data } = await supabase
-    .from('stakes')
-    .select('staker_id, agent_id, amount, earned');
-  return (data ?? []).map((s) => ({
-    stakerId: s.staker_id,
-    agentId: s.agent_id,
-    amount: Number(s.amount),
-    earned: Number(s.earned),
-  }));
-}
-
-/** Total Furnace (dibakar) dan treasury (Counting House = tithe + patron cut
- *  yang tidak terbagi) dari semua job yang sudah disegel. */
-export async function getWageSplitTotals(supabase: Client) {
-  const { data } = await supabase
-    .from('wage_splits')
-    .select('furnace, tithe, treasury_redirect');
+/** Total Furnace (dibakar), dijumlahkan dari `wage_splits` (satu baris per job yang disegel, dicatat oleh
+ *  record_wage_split). Counting House TIDAK lagi dari tabel ini: lihat getCountingHouse(). */
+export async function getBurnedTotal(supabase: Client) {
+  const { data } = await supabase.from('wage_splits').select('furnace');
   let burned = 0;
-  let treasury = 0;
-  for (const r of data ?? []) {
-    burned += Number(r.furnace);
-    treasury += Number(r.tithe) + Number(r.treasury_redirect);
-  }
-  return { burned, treasury };
+  for (const r of data ?? []) burned += Number(r.furnace);
+  return burned;
 }
 
-/** Bagian patron yang pernah diterima satu staker, terbaru dulu (untuk feed "You earned"). */
-export async function listPayoutsByStaker(
-  supabase: Client,
-  stakerId: string,
-  limit = 10,
-) {
-  const { data } = await supabase
-    .from('stake_payouts')
-    .select('id, job_id, agent_id, amount, created_at')
-    .eq('staker_id', stakerId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  return (data ?? []).map((p) => ({
-    id: p.id,
-    jobId: p.job_id,
-    agentId: p.agent_id,
-    amount: Number(p.amount),
-    at: p.created_at,
-  }));
+/** Counting House = tithe + bagian patron yang dialihkan ke treasury, dibaca dari event on-chain yang sudah
+ *  diindeks (counting_house_totals, 0020). Hanya service role yang boleh memanggilnya, jadi `admin` harus
+ *  client service role. Gagal / migrasi 0020 belum jalan -> `null` (UI menampilkan "—", bukan 0). */
+export async function getCountingHouse(admin: Client): Promise<CountingHouse | null> {
+  const { data, error } = await admin.rpc('counting_house_totals');
+  if (error || !data) return null;
+  return parseCountingHouse(data);
 }
 
 /** Semua job milik satu Wright (agent_id = id), terbaru dulu. Dipakai Page E
@@ -375,16 +342,14 @@ export async function approveJob(
 
   const writer = admin;
 
-  let agentName = 'the Wright';
   if (job.agent_id) {
     const { data: agent } = await writer
       .from('agents')
-      .select('name, revenue_30d, jobs_sealed')
+      .select('revenue_30d, jobs_sealed')
       .eq('id', job.agent_id)
       .single();
 
     if (agent) {
-      agentName = agent.name;
       await writer
         .from('agents')
         .update({
@@ -405,10 +370,10 @@ export async function approveJob(
     tx: onChain?.sealTx ?? null,
   });
 
-  // Revision 1: catat pembagian 60/20/10/10 -- Furnace (burn), pro rata ke staker, dan
-  // aturan "tanpa staker, bagian patron ke treasury". Atomik & idempoten di Postgres
-  // (record_wage_split, 0013). Kegagalan di sini TIDAK membatalkan seal (job sudah
-  // 'paid'); dicatat ke Ledger dan fungsinya aman dipanggil ulang.
+  // Catat pembagian 60/20/10/10 per job (angka Furnace di kota). Atomik & idempoten di Postgres
+  // (record_wage_split). Sejak cut-over (0020) fungsi ini TIDAK lagi membagi ke staker: bagian patron
+  // dibagi kontrak (Splitter v2 -> Patronage) dan dibaca dari chain. Kegagalan di sini TIDAK membatalkan
+  // seal (job sudah 'paid'); dicatat ke Ledger dan fungsinya aman dipanggil ulang.
   if (job.agent_id) {
     const { data: split, error: splitError } = await writer.rpc(
       'record_wage_split',
@@ -426,7 +391,7 @@ export async function approveJob(
         job_id: jobId,
         actor: 'system',
         type: 'split_record_failed',
-        note: `The wage is released, but the split could not be recorded (${splitError.message}). Is migration 0013 applied?`,
+        note: `The wage is released, but the split could not be recorded (${splitError.message}).`,
       });
     } else if (split) {
       await writer.from('job_events').insert({
@@ -435,14 +400,6 @@ export async function approveJob(
         type: 'burned',
         note: `${formatWage(split.furnace)} burned in the Furnace.`,
       });
-      if (split.stakerCount > 0) {
-        await writer.from('job_events').insert({
-          job_id: jobId,
-          actor: 'patrons',
-          type: 'patrons_paid',
-          note: `${formatWage(split.distributed)} shared among ${split.stakerCount} ${split.stakerCount === 1 ? 'patron' : 'patrons'} of ${agentName}.`,
-        });
-      }
     }
   }
 

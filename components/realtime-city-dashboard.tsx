@@ -1,9 +1,10 @@
 'use client';
 
-import { WAGE_UNIT } from '@/lib/currency';
-import { summarizeStakes, formatWage, type StakeItem } from '@/lib/patronage';
+import { WAGE_UNIT, formatWage } from '@/lib/currency';
 import { useWageBalance } from '@/lib/web3/use-wage-balance';
-import { useMemo, useState } from 'react';
+import { usePatronBuildings } from '@/lib/web3/use-patron-buildings';
+import { useOnchainPools } from '@/components/patronage/use-onchain-pools';
+import { useEffect, useMemo, useState } from 'react';
 import { CityScene, type CityAgent } from '@/components/city-scene';
 import { useCityChainSignals } from '@/components/weighhouse/use-work-ratio';
 import { StatBar } from '@/components/stat-bar';
@@ -52,21 +53,15 @@ interface DashboardAgent {
   revenue30d: number;
 }
 
-/** Bagian patron yang diterima staker (stake_payouts) -- sumber baris feed "You earned". */
-interface DashboardPayout {
-  id: string;
-  jobId: string;
-  agentId: string;
-  amount: number;
-  at: string;
+interface WageTotals {
+  /** Total yang dibakar di Furnace (wage_splits.furnace). */
+  burned: number;
+  /** Counting House: tithe + reward yang dialihkan ke treasury, dari chain (0020). null = belum terbaca. */
+  treasury: number | null;
 }
 
-interface WageTotals {
-  /** Total yang dibakar di Furnace. */
-  burned: number;
-  /** Counting House: tithe + bagian patron yang tidak terbagi. */
-  treasury: number;
-}
+/** Counting House dipolling dari `/api/counting-house` (event on-chain yang sudah diindeks). */
+const COUNTING_HOUSE_POLL_MS = 60_000;
 
 interface DashboardJob {
   id: string;
@@ -111,25 +106,19 @@ export function RealtimeCityDashboard({
   initialAgents,
   initialJobs,
   initialEvents,
-  initialStakes,
   initialTotals,
-  initialPayouts,
   initialUserId,
 }: {
   initialAgents: DashboardAgent[];
   initialJobs: DashboardJob[];
   initialEvents: DashboardEvent[];
-  initialStakes: StakeItem[];
   initialTotals: WageTotals;
-  initialPayouts: DashboardPayout[];
   initialUserId: string | null;
 }) {
   const [agents, setAgents] = useState(initialAgents);
   const [jobs, setJobs] = useState(initialJobs);
   const [events, setEvents] = useState(initialEvents);
-  const [stakes, setStakes] = useState(initialStakes);
   const [totals, setTotals] = useState(initialTotals);
-  const [payouts, setPayouts] = useState(initialPayouts);
   // Wright yang profilnya tampil di panel kiri -- default: revenue tertinggi
   // (listAgents mengurutkan revenue_30d menurun). Diganti lewat klik gedung.
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -137,6 +126,10 @@ export function RealtimeCityDashboard({
   );
   const userId = useIdentity(initialUserId);
   const walletBalance = useWageBalance();
+  // Cincin emas (§8.3): bangunan yang di-stake wallet yang terhubung, dibaca langsung dari kontrak.
+  const patronIds = usePatronBuildings(initialAgents.map((a) => a.id));
+  // Stake dan jumlah patron per bangunan (stat bar profil) dari indexer on-chain.
+  const onchainPools = useOnchainPools();
   // Kilau jendela landmark Weighhouse mengikuti Work Ratio 24 jam.
   const { workRatioPct: workRatio24h, burnPulse } = useCityChainSignals();
 
@@ -201,61 +194,38 @@ export function RealtimeCityDashboard({
     );
   });
 
-  // Patronage: stake berubah (stake / unstake / earned bertambah saat seal).
-  useRealtimeChanges('stakes', (payload) => {
-    if (payload.eventType === 'DELETE') return; // baris stake tidak pernah dihapus (amount 0 = ditarik)
-    const row = payload.new;
-    const next: StakeItem = {
-      stakerId: row.staker_id,
-      agentId: row.agent_id,
-      amount: Number(row.amount),
-      earned: Number(row.earned),
-    };
-    setStakes((prev) => {
-      const idx = prev.findIndex(
-        (s) => s.stakerId === next.stakerId && s.agentId === next.agentId,
-      );
-      if (idx === -1) return [...prev, next];
-      const copy = prev.slice();
-      copy[idx] = next;
-      return copy;
-    });
-  });
-
-  // Furnace & Counting House: satu baris wage_splits per job yang disegel.
+  // Furnace: satu baris wage_splits per job yang disegel. Counting House BUKAN dari sini (lihat bawah).
   useRealtimeChanges('wage_splits', (payload) => {
     if (payload.eventType !== 'INSERT') return;
     const row = payload.new;
-    setTotals((prev) => ({
-      burned: prev.burned + Number(row.furnace),
-      treasury:
-        prev.treasury + Number(row.tithe) + Number(row.treasury_redirect),
-    }));
+    setTotals((prev) => ({ ...prev, burned: prev.burned + Number(row.furnace) }));
   });
 
-  // Hanya payout MILIK user ini yang didengar (untuk baris feed "You earned").
-  useRealtimeChanges(
-    'stake_payouts',
-    (payload) => {
-      if (payload.eventType !== 'INSERT' || !userId) return;
-      const row = payload.new;
-      setPayouts((prev) =>
-        prev.some((p) => p.id === row.id)
-          ? prev
-          : [
-              {
-                id: row.id,
-                jobId: row.job_id,
-                agentId: row.agent_id,
-                amount: Number(row.amount),
-                at: row.created_at,
-              },
-              ...prev,
-            ].slice(0, MAX_EVENTS),
-      );
-    },
-    `staker_id=eq.${userId ?? 'none'}`,
-  );
+  // Counting House (tithe + reward yang dialihkan) dari event on-chain: dipolling, dilewati saat tab
+  // tersembunyi. Bacaan gagal mempertahankan angka terakhir (tidak berkedip jadi 0).
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (document.hidden) return;
+      try {
+        const r = await fetch('/api/counting-house');
+        if (!r.ok) return;
+        const json = (await r.json()) as { total?: number };
+        if (cancelled || typeof json.total !== 'number') return;
+        const total = json.total;
+        setTotals((prev) => ({ ...prev, treasury: total }));
+      } catch {
+        /* diam: stat bar tetap pada nilai terakhir */
+      }
+    };
+    // Sekali saat mount (murah, di-cache 30 dtk di edge): menutup kasus server gagal membaca saat render.
+    void load();
+    const id = setInterval(() => void load(), COUNTING_HOUSE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   // Status per agent diturunkan dari job aktifnya -- belum ada kolom
   // `status` di tabel agents, karena status memang milik job, bukan agent.
@@ -342,8 +312,7 @@ export function RealtimeCityDashboard({
     [cityAgents],
   );
 
-  // Counting House & Furnace dibaca dari wage_splits (0013), yang dicatat atomik saat
-  // seal: treasury = tithe + bagian patron yang tidak terbagi (bangunan tanpa staker).
+  // Furnace dari wage_splits (dicatat record_wage_split saat seal); Counting House dari chain (/api/counting-house).
 
   const agentCodes = useMemo(() => {
     const map: Record<string, string> = {};
@@ -384,7 +353,8 @@ export function RealtimeCityDashboard({
       revenue30d: 0,
       rating: null,
     };
-    const pool = summarizeStakes(stakes, a.id, userId);
+    // Stake & jumlah patron: on-chain (indexer).
+    const pool = onchainPools.get(a.id) ?? { stakerCount: 0, stakedWage: 0 };
     // Warden: agregat seluruh Ward, bukan job miliknya sendiri (selalu 0).
     const stats = a.isLead
       ? (statsByDistrict.get(a.district) ?? ownStats)
@@ -413,15 +383,8 @@ export function RealtimeCityDashboard({
     statsByAgent,
     statsByDistrict,
     statusByAgent,
-    stakes,
-    userId,
+    onchainPools,
   ]);
-
-  // Patronage bangunan yang sedang dipilih: pool total + stake/earned milik user ini.
-  const patronage = useMemo(
-    () => summarizeStakes(stakes, selectedId ?? '', userId),
-    [stakes, selectedId, userId],
-  );
 
   const toSummary = (j: DashboardJob, code: string): JobSummary => ({
     id: j.id,
@@ -468,11 +431,6 @@ export function RealtimeCityDashboard({
     [jobs],
   );
 
-  const agentNameById = useMemo(
-    () => new Map(agents.map((a) => [a.id, a.name])),
-    [agents],
-  );
-
   const ledgerEvents: LedgerEvent[] = useMemo(() => {
     const shared: LedgerEvent[] = events.map((e) => ({
       id: e.id,
@@ -482,21 +440,10 @@ export function RealtimeCityDashboard({
         jobTitleById.get(e.jobId) ?? 'a job',
       )}"`,
     }));
-    // Baris pribadi (hanya terlihat oleh patron itu sendiri): "You earned {n} WAGE as a
-    // patron of {Wright}". Nominal 0 (mis. pembulatan) tidak ditampilkan.
-    const mine: LedgerEvent[] = payouts
-      .filter((p) => p.amount > 0)
-      .map((p) => ({
-        id: `payout-${p.id}`,
-        at: p.at,
-        html: `<b>You</b> earned ${escapeHtml(formatWage(p.amount))} as a patron of ${escapeHtml(
-          agentNameById.get(p.agentId) ?? 'a Wright',
-        )} -- "${escapeHtml(jobTitleById.get(p.jobId) ?? 'a job')}"`,
-      }));
-    return [...shared, ...mine]
+    return shared
       .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
       .slice(0, MAX_EVENTS);
-  }, [events, payouts, jobTitleById, agentNameById]);
+  }, [events, jobTitleById]);
 
   return (
     <MotionPage className="flex h-screen flex-col gap-3 p-3">
@@ -510,7 +457,10 @@ export function RealtimeCityDashboard({
           stats={[
             {
               label: 'Counting House',
-              value: `${Math.round(totals.treasury).toLocaleString('en-US')} ${WAGE_UNIT}`,
+              value:
+                totals.treasury === null
+                  ? '—'
+                  : `${Math.round(totals.treasury).toLocaleString('en-US')} ${WAGE_UNIT}`,
             },
             {
               label: 'In the Strongbox',
@@ -548,8 +498,7 @@ export function RealtimeCityDashboard({
           agent={selectedAgent}
           currentJob={currentJob}
           sealedJobs={sealedJobs}
-          patronage={patronage}
-          canIdentify={!!userId}
+          viewerId={initialUserId}
           className="h-[520px] lg:h-full"
         />
 
@@ -559,6 +508,7 @@ export function RealtimeCityDashboard({
             action={
               <span className="text-[11.5px] text-faint">
                 drag to rotate · scroll to zoom
+                {patronIds.size > 0 && ' · gold ring: you are a patron here'}
               </span>
             }
           />
@@ -575,6 +525,7 @@ export function RealtimeCityDashboard({
                 onSelect={setSelectedId}
                 workRatioPct={workRatio24h}
                 burnPulse={burnPulse}
+                patronIds={patronIds}
               />
             )}
 

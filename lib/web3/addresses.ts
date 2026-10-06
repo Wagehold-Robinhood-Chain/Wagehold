@@ -52,6 +52,18 @@ export const OPEN_ITEMS = {
   v4StateView: optional(process.env.WEIGHHOUSE_V4_STATE_VIEW),
 } as const;
 
+/** Patronage build (Strongbox v2 + Splitter v2 + WageholdPatronage). Semua OPSIONAL: kosong = aliran
+ *  indexer Patronage mati dengan anggun (Weighhouse lama tetap jalan). Isi SETELAH batch Timelock
+ *  (acceptOwnership) selesai -- lihat contracts/PATRONAGE_ROLLOUT.md.
+ *  `deployBlock` = blok PEMBUATAN kontrak paling awal di antara ketiganya (bukan blok cut-over):
+ *  event sebelum blok ini tidak akan pernah diindeks. */
+export const PATRONAGE = {
+  patronage: optional(process.env.WEIGHHOUSE_PATRONAGE_ADDRESS),
+  strongboxV2: optional(process.env.WEIGHHOUSE_STRONGBOX_V2_ADDRESS),
+  splitterV2: optional(process.env.WEIGHHOUSE_SPLITTER_V2_ADDRESS),
+  deployBlock: process.env.WEIGHHOUSE_PATRONAGE_DEPLOY_BLOCK ? BigInt(process.env.WEIGHHOUSE_PATRONAGE_DEPLOY_BLOCK) : undefined,
+} as const;
+
 export const WAGE_DECIMALS = 18;
 export const WAGE_TOTAL_SUPPLY_CAP = 1_000_000_000; // untuk "% supply terbakar" (brief §4D)
 
@@ -62,6 +74,7 @@ const explorer = (activeChain.blockExplorers?.default.url ?? "https://robinhoodc
 export const explorerAddress = (a: string) => `${explorer}/address/${a}`;
 export const explorerTx = (h: string) => `${explorer}/tx/${h}`;
 export const explorerToken = (a: string) => `${explorer}/token/${a}`;
+export const explorerBlock = (n: number | bigint | string) => `${explorer}/block/${n}`;
 
 /** Link halaman Pons $WAGE. Sengaja lewat env (tidak ada URL yang bisa kami verifikasi); kosong = link disembunyikan. */
 export const PONS_TOKEN_URL = process.env.NEXT_PUBLIC_PONS_TOKEN_URL || undefined;

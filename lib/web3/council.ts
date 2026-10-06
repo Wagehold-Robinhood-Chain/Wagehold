@@ -2,7 +2,7 @@ import { createWalletClient, http, isAddress, isAddressEqual, zeroAddress, type 
 import { privateKeyToAccount } from "viem/accounts";
 import { activeChain } from "@/lib/web3/chains";
 import { publicClient } from "@/lib/web3/public-client";
-import { splitterAbi } from "@/lib/web3/splitter";
+import { splitterAbi, splitterV2Abi, strongboxRolesAbi } from "@/lib/web3/splitter";
 import {
   computeJobId,
   isOnChainEscrowConfigured,
@@ -32,7 +32,14 @@ import {
  *   - Splitter not set                 -> payee = the Wright's own wallet
  *     (`agents.wallet`), no split (only sensible for an early testnet run).
  *
- * `COUNCIL_PRIVATE_KEY` must be the same address as `WageholdStrongbox
+ * PATRONAGE BUILD (`WAGEHOLD_SPLITTER_VERSION=2`, Strongbox v2 + Splitter v2, brief H2/H3): the
+ * server no longer holds the Council key. It holds a **Registrar** key (`REGISTRAR_PRIVATE_KEY`)
+ * whose only powers on-chain are `setPayee` (allow-list only: the Splitter) and `registerJob`
+ * (binds the job to the Wright's building, `agentId = keccak256(bytes(agentUuid))`). Dispute
+ * resolution stays with the Council Safe, which the server never touches. The Patron cut is no
+ * longer sent to `agents.wallet`: it goes to the Patronage contract for that building.
+ *
+ * Legacy (`WAGEHOLD_SPLITTER_VERSION` unset or 1): `COUNCIL_PRIVATE_KEY` must be the same address as `WageholdStrongbox
  * .council()` (and `WageholdSplitter.council()` if a Splitter is used) --
  * checked before any transaction is sent. Server-only: never prefix it with
  * `NEXT_PUBLIC_`.
@@ -46,16 +53,25 @@ function toAddress(value: string | undefined): Address | undefined {
 const splitterAddress = toAddress(process.env.WAGEHOLD_SPLITTER_ADDRESS);
 const patronPoolFallback = toAddress(process.env.WAGEHOLD_PATRON_POOL_ADDRESS);
 
-/** True once a council key is set. Does not validate the key itself -- a
- *  malformed key surfaces as an error from `getCouncil()` on first use. */
-export const isCouncilConfigured = !!process.env.COUNCIL_PRIVATE_KEY;
+/** "2" = Patronage build (Strongbox v2 + Splitter v2, Registrar key). Anything else = legacy
+ *  Strongbox v1 + Splitter v1 with the Council key. Switch only AFTER the v1 Strongbox has drained
+ *  (see contracts/PATRONAGE_ROLLOUT.md): the app talks to exactly one Strongbox at a time. */
+export const isPatronageBuild = process.env.WAGEHOLD_SPLITTER_VERSION === "2";
+
+/** Name of the env var that holds the server's signing key in the active build. */
+const KEY_ENV = isPatronageBuild ? "REGISTRAR_PRIVATE_KEY" : "COUNCIL_PRIVATE_KEY";
+
+/** True once the server signing key is set (Registrar key in the Patronage build, Council key in
+ *  the legacy build). Does not validate the key itself -- a malformed key surfaces as an error
+ *  from `getCouncil()` on first use. Name kept so existing importers do not change. */
+export const isCouncilConfigured = !!process.env[KEY_ENV];
 
 function getCouncil() {
-  const key = process.env.COUNCIL_PRIVATE_KEY;
-  if (!key) throw new Error("COUNCIL_PRIVATE_KEY is not set on the server");
+  const key = process.env[KEY_ENV];
+  if (!key) throw new Error(`${KEY_ENV} is not set on the server`);
   const normalized = key.startsWith("0x") ? key : `0x${key}`;
   if (!/^0x[0-9a-fA-F]{64}$/.test(normalized)) {
-    throw new Error("COUNCIL_PRIVATE_KEY is not a valid 32-byte hex private key");
+    throw new Error(`${KEY_ENV} is not a valid 32-byte hex private key`);
   }
   const account = privateKeyToAccount(normalized as `0x${string}`);
   const walletClient = createWalletClient({
@@ -86,7 +102,7 @@ export type PrepareState = "ready" | "already_released";
  */
 export async function preparePayeeOnChain(
   jobUuid: string,
-  wrightWallet: string | null | undefined
+  agent: { id: string; wallet?: string | null }
 ): Promise<{ state: PrepareState }> {
   const strongbox = requireStrongbox();
   const jobId = computeJobId(jobUuid);
@@ -104,10 +120,17 @@ export async function preparePayeeOnChain(
   }
 
   // Decide the payee plan from server-side data only.
-  const wallet = toAddress(wrightWallet ?? undefined);
+  const wallet = toAddress(agent.wallet ?? undefined);
   let payee: Address;
   let patronPool: Address | undefined;
-  if (splitterAddress) {
+  if (isPatronageBuild) {
+    // Patronage build: the payee is ALWAYS the Splitter (Strongbox v2 refuses anything else) and the
+    // Patron cut goes to the Patronage contract for the building, so no wallet is involved.
+    if (!splitterAddress) {
+      throw new Error("WAGEHOLD_SPLITTER_ADDRESS must be set when WAGEHOLD_SPLITTER_VERSION=2");
+    }
+    payee = splitterAddress;
+  } else if (splitterAddress) {
     payee = splitterAddress;
     patronPool = wallet ?? patronPoolFallback;
     if (!patronPool) {
@@ -126,13 +149,21 @@ export async function preparePayeeOnChain(
 
   const { account, walletClient } = getCouncil();
 
-  const onChainCouncil = await publicClient.readContract({
-    address: strongbox,
-    abi: strongboxAbi,
-    functionName: "council",
-  });
-  if (!isAddressEqual(onChainCouncil, account.address)) {
-    throw new Error("COUNCIL_PRIVATE_KEY is not the council of this Strongbox");
+  const onChainRole = isPatronageBuild
+    ? await publicClient.readContract({
+        address: strongbox,
+        abi: strongboxRolesAbi,
+        functionName: "registrar",
+      })
+    : await publicClient.readContract({
+        address: strongbox,
+        abi: strongboxAbi,
+        functionName: "council",
+      });
+  if (!isAddressEqual(onChainRole, account.address)) {
+    throw new Error(
+      `${KEY_ENV} is not the ${isPatronageBuild ? "registrar" : "council"} of this Strongbox`
+    );
   }
 
   if (job.payee === zeroAddress || !isAddressEqual(job.payee, payee)) {
@@ -148,7 +179,29 @@ export async function preparePayeeOnChain(
     if (receipt.status !== "success") throw new Error("setPayee transaction reverted");
   }
 
-  if (splitterAddress && patronPool) {
+  if (isPatronageBuild && splitterAddress) {
+    // agentId = keccak256(bytes(agentUuid)), the same pattern as jobId. The Splitter checks that it is
+    // a building registered in Patronage; an unregistered building makes registerJob revert.
+    const agentId = computeJobId(agent.id);
+    const split = await publicClient.readContract({
+      address: splitterAddress,
+      abi: splitterV2Abi,
+      functionName: "getSplit",
+      args: [jobId],
+    });
+    if (split.amount === BigInt(0)) {
+      const { request } = await publicClient.simulateContract({
+        account,
+        address: splitterAddress,
+        abi: splitterV2Abi,
+        functionName: "registerJob",
+        args: [jobId, agentId],
+      });
+      const hash = await walletClient.writeContract(request);
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error("registerJob transaction reverted");
+    }
+  } else if (splitterAddress && patronPool) {
     const split = await publicClient.readContract({
       address: splitterAddress,
       abi: splitterAbi,
@@ -182,7 +235,7 @@ export type SplitResult =
  * After the client's seal: calls `WageholdSplitter.pullAndSplit(jobId)`,
  * which pulls the released wage out of the Strongbox and credits Patrons /
  * Lamp Oil / Tithe 60/20/10 and burns the 10% Furnace share in the same transaction (each destination then withdraws for itself).
- * `pullAndSplit` is permissionless -- the council key is only used here as a
+ * `pullAndSplit` is permissionless -- the server key (Registrar in the Patronage build) is only used here as a
  * funded account to send it, so a failure is never fatal: anyone can call it
  * later, and the caller records a "split pending" event instead.
  */
@@ -190,12 +243,19 @@ export async function splitAfterRelease(jobUuid: string): Promise<SplitResult> {
   if (!splitterAddress) return { status: "skipped", reason: "no Splitter configured" };
 
   const jobId = computeJobId(jobUuid);
-  const split = await publicClient.readContract({
-    address: splitterAddress,
-    abi: splitterAbi,
-    functionName: "getSplit",
-    args: [jobId],
-  });
+  const split = isPatronageBuild
+    ? await publicClient.readContract({
+        address: splitterAddress,
+        abi: splitterV2Abi,
+        functionName: "getSplit",
+        args: [jobId],
+      })
+    : await publicClient.readContract({
+        address: splitterAddress,
+        abi: splitterAbi,
+        functionName: "getSplit",
+        args: [jobId],
+      });
   if (split.amount === BigInt(0)) {
     return { status: "skipped", reason: "job was never registered with the Splitter" };
   }

@@ -25,6 +25,44 @@ export const SPLITTER_EVENTS = [
 ] as const satisfies readonly AbiEvent[];
 
 /**
+ * Splitter v2 (contracts/src/WageholdSplitterV2.sol). Event yang SAMA NAMA dengan v1 tapi signature
+ * (jadi topic0) berbeda: argumen kedua `agentId bytes32`, bukan `patronPool address`. Karena itu
+ * ABI v1 di atas TIDAK bisa membaca log v2 -- keduanya harus didaftarkan terpisah. Nama event
+ * yang tersimpan di chain_events tetap sama (JobRegistered / JobSplit / Burned), jadi
+ * weighhouse_flow() ikut menghitung v2 tanpa perubahan.
+ */
+export const SPLITTER_V2_EVENTS = [
+  parseAbiItem("event JobRegistered(bytes32 indexed jobId, bytes32 indexed agentId, uint256 amount)"),
+  parseAbiItem(
+    "event JobSplit(bytes32 indexed jobId, bytes32 indexed agentId, uint256 patronAmount, uint256 lampOilAmount, uint256 titheAmount, uint256 burnAmount)",
+  ),
+  parseAbiItem("event Burned(address indexed caller, uint256 amount)"),
+] as const satisfies readonly AbiEvent[];
+
+/**
+ * WageholdPatronage (contracts/src/WageholdPatronage.sol). Disimpan di chain_events dengan
+ * `contract` = alamat Patronage. Hati-hati: `Withdrawn` juga nama event di Strongbox/Splitter
+ * (signature lain) -- selalu saring dengan kolom `contract`, jangan hanya `event`.
+ * patronage_apply() (0018) membaca Staked / UnstakeRequested / Withdrawn / Claimed /
+ * RewardNotified / RewardRedirected / BuildingRegistered; RedirectFlushed hanya dicatat.
+ */
+export const PATRONAGE_EVENTS = [
+  parseAbiItem("event Staked(bytes32 indexed agentId, address indexed user, uint256 amount)"),
+  parseAbiItem("event UnstakeRequested(bytes32 indexed agentId, address indexed user, uint256 amount, uint256 unlockAt)"),
+  parseAbiItem("event Withdrawn(bytes32 indexed agentId, address indexed user, uint256 amount)"),
+  parseAbiItem("event Claimed(bytes32 indexed agentId, address indexed user, uint256 amount)"),
+  parseAbiItem("event RewardNotified(bytes32 indexed agentId, bytes32 indexed jobId, uint256 amount, uint256 accRewardPerShare)"),
+  parseAbiItem("event RewardRedirected(bytes32 indexed agentId, bytes32 indexed jobId, uint256 amount, address to)"),
+  parseAbiItem("event RedirectFlushed(address indexed to, uint256 amount)"),
+  parseAbiItem("event BuildingRegistered(bytes32 indexed agentId, bool on)"),
+] as const satisfies readonly AbiEvent[];
+
+/** Event Patronage yang tampil di ledger (Dev Brief §8.3, sesi 4C): stake baru, reward yang dibagi ke patron,
+ *  dan reward yang dialihkan ke treasury karena tidak ada staker. Ketiga nama ini hanya dipancarkan kontrak
+ *  Patronage, jadi menyaring berdasarkan nama aman (beda dengan `Withdrawn`). Digabung ke LEDGER_EVENT_NAMES di bawah. */
+export const PATRONAGE_LEDGER_EVENT_NAMES: string[] = ["Staked", "RewardNotified", "RewardRedirected"];
+
+/**
  * Event pasar Pons V2. Signature + topic0 diverifikasi terhadap dokumentasi Bitquery
  * (docs.bitquery.io/docs/blockchain/robinhood/pons-api) dengan keccak-256 -- semuanya cocok:
  *   CurveBuy  ec36bf57..., CurveSell 8113d738..., TokenLaunched 8d4aad49..., PoolGraduated 0a44ef75...
@@ -61,7 +99,9 @@ export const ERC20_ABI = [
 ] as const;
 
 /** Tipe event yang tampil di ledger (§4G). */
-export type LedgerKind = "Locked" | "Sealed" | "Refunded" | "Disputed" | "Resolved" | "Registered" | "Split" | "Burned" | "Swap" | "Trade" | "Graduated";
+export type LedgerKind =
+  | "Locked" | "Sealed" | "Refunded" | "Disputed" | "Resolved" | "Registered" | "Split" | "Burned" | "Swap" | "Trade" | "Graduated"
+  | "Staked" | "Patron reward" | "Redirected";
 
 export const EVENT_KIND: Record<string, LedgerKind> = {
   JobFunded: "Locked",
@@ -76,7 +116,14 @@ export const EVENT_KIND: Record<string, LedgerKind> = {
   CurveBuy: "Trade",
   CurveSell: "Trade",
   PoolGraduated: "Graduated",
+  // Patronage (4C). Istilah netral sesuai §10: reward adalah bagian dari upah yang disegel, bukan imbal hasil.
+  Staked: "Staked",
+  RewardNotified: "Patron reward",
+  RewardRedirected: "Redirected",
 };
 
-/** Hanya event Strongbox + Splitter yang tampil di ledger (§4G); trade pasar dihitung, tidak ditampilkan. */
-export const LEDGER_EVENT_NAMES: string[] = [...STRONGBOX_EVENTS, ...SPLITTER_EVENTS].map((e) => e.name);
+/** Event Strongbox + Splitter + tiga event Patronage yang tampil di ledger (§4G, §8.3); trade pasar dihitung,
+ *  tidak ditampilkan. Nama sama antara v1 dan v2 (JobSplit dll.), jadi satu daftar nama cukup. */
+export const LEDGER_EVENT_NAMES: string[] = [
+  ...new Set([...STRONGBOX_EVENTS, ...SPLITTER_EVENTS].map((e) => e.name).concat(PATRONAGE_LEDGER_EVENT_NAMES)),
+];

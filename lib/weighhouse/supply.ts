@@ -1,8 +1,9 @@
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { weighhouseClient as publicClient } from "./rpc";
-import { ADDRESSES, OPEN_ITEMS, PONS } from "@/lib/web3/addresses";
+import { ADDRESSES, OPEN_ITEMS, PATRONAGE, PONS } from "@/lib/web3/addresses";
 import { ERC20_ABI } from "./events";
 import { readPoolState, wagePoolKey } from "./pons";
+import { circulatingSupply } from "./supply-math";
 import { fullRangeReserves } from "./v4math";
 
 const ZERO = "0x0000000000000000000000000000000000000000" as const;
@@ -10,37 +11,50 @@ const ZERO = "0x0000000000000000000000000000000000000000" as const;
 /** Snapshot supply (brief §4B/§5.3): satu putaran readContract paralel untuk semua balanceOf + totalSupply.
  *  Dipanggil cron; halaman hanya membaca supply_snapshots (tanpa RPC di jalur request). */
 export async function takeSupplySnapshot() {
-  const token = ADDRESSES.wageToken;
+  // Token yang dipakai stack ini: NEXT_PUBLIC_WAGE_TOKEN_ADDRESS bila diisi (stack testnet 46630 punya token sendiri,
+  // sama dengan yang dibaca Patronage lewat wageToken()), kalau tidak CA di brief. Semua bucket dibaca dari token yang sama.
+  const envToken = process.env.NEXT_PUBLIC_WAGE_TOKEN_ADDRESS?.trim().toLowerCase();
+  const token = (/^0x[0-9a-f]{40}$/.test(envToken ?? "") ? envToken : ADDRESSES.wageToken) as `0x${string}`;
+  if (token !== ADDRESSES.wageToken) {
+    console.warn(`[weighhouse] snapshot supply memakai token dari env (${token}), bukan CA brief (${ADDRESSES.wageToken}).`);
+  }
 
   // Satu putaran readContract paralel (bukan multicall): definisi chain Robinhood tidak memuat alamat
   // Multicall3, sehingga publicClient.multicall() gagal ("chain does not support multicall3").
-  const read = (a?: `0x${string}`): Promise<bigint> =>
+  const supplyOf = () =>
+    publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "totalSupply" }) as Promise<bigint>;
+  // Alamat opsional (kontrak v2 / Patronage belum tentu terisi di env): tanpa alamat = saldo 0, BUKAN totalSupply.
+  const balanceOf = (a?: `0x${string}`): Promise<bigint> =>
     a
       ? (publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [a] }) as Promise<bigint>)
-      : (publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "totalSupply" }) as Promise<bigint>);
+      : Promise.resolve(0n);
 
-  const addrs = [
-    undefined, // totalSupply
-    ADDRESSES.furnace,
-    ZERO,
-    PONS.launchLocker,
-    ADDRESSES.strongbox,
-    ADDRESSES.splitter,
-    ADDRESSES.lampOilTreasury,
-    ADDRESSES.titheTreasury,
-    PONS.poolManager, // hanya untuk penjaga estimasi LP (bukan bucket)
-    ...(OPEN_ITEMS.wageCurve ? [OPEN_ITEMS.wageCurve] : []),
-  ];
-
-  const [block, res] = await Promise.all([
+  const [
+    block, total, burnedDead, burnedZero, locker, strongboxV1, splitterV1, lamp, tithe, poolManagerWage, curve,
+    strongboxV2, splitterV2, patronage,
+  ] = await Promise.all([
     publicClient.getBlockNumber(),
-    Promise.all(addrs.map((a) => read(a))),
+    supplyOf(),
+    balanceOf(ADDRESSES.furnace),
+    balanceOf(ZERO),
+    balanceOf(PONS.launchLocker),
+    balanceOf(ADDRESSES.strongbox),
+    balanceOf(ADDRESSES.splitter),
+    balanceOf(ADDRESSES.lampOilTreasury),
+    balanceOf(ADDRESSES.titheTreasury),
+    balanceOf(PONS.poolManager), // hanya untuk penjaga estimasi LP (bukan bucket)
+    balanceOf(OPEN_ITEMS.wageCurve),
+    // Patronage build (Tahap 4C). Strongbox/Splitter v2 digabung ke bucket Strongbox/Splitter yang sama;
+    // saldo kontrak Patronage (stake + cooldown + reward belum diklaim) jadi bucket sendiri, kalau tidak
+    // $WAGE yang di-stake ikut terhitung "Circulating".
+    balanceOf(PATRONAGE.strongboxV2),
+    balanceOf(PATRONAGE.splitterV2),
+    balanceOf(PATRONAGE.patronage),
   ]);
-  const r = res as bigint[];
-  const [total, burnedDead, burnedZero, locker, strongbox, splitter, lamp, tithe, poolManagerWage] = r;
-  const curve = OPEN_ITEMS.wageCurve ? r[9] : 0n;
   const burned = burnedDead + burnedZero;
   const treasuries = lamp + tithe;
+  const strongbox = strongboxV1 + strongboxV2;
+  const splitter = splitterV1 + splitterV2;
 
   // LP pasca-graduation: TIDAK dari saldo PoolManager mentah (isinya banyak token -- brief §4B).
   // Dibaca dari state pool $WAGE (pool ID dihitung dari token + hook Pons, lihat pons.ts) dengan model
@@ -61,7 +75,7 @@ export async function takeSupplySnapshot() {
     console.warn("[weighhouse] LP pool tidak terbaca:", e instanceof Error ? e.message : e);
   }
 
-  const circulating = total - burned - curve - locker - (lp ?? 0n) - strongbox - splitter - treasuries;
+  const circulating = circulatingSupply({ total, burned, curve, lp, locker, strongbox, splitter, treasuries, patronage });
 
   const row = {
     taken_at: new Date().toISOString(),
@@ -69,7 +83,7 @@ export async function takeSupplySnapshot() {
     total: total.toString(), burned: burned.toString(), curve: curve.toString(),
     lp: lp === null ? null : (lp as bigint).toString(),
     locker: locker.toString(), strongbox: strongbox.toString(), splitter: splitter.toString(),
-    treasuries: treasuries.toString(), circulating: circulating.toString(),
+    treasuries: treasuries.toString(), patronage: patronage.toString(), circulating: circulating.toString(),
   };
   const { error } = await createServiceRoleClient().from("supply_snapshots").insert(row as never);
   return error ? { ok: false as const, error: error.message } : { ok: true as const, row };

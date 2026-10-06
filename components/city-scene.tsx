@@ -263,6 +263,10 @@ interface Building {
   status: AgentStatus;
   revenue: number;
   delay: number; // detik, untuk animasi muncul satu per satu
+  /** Cincin emas di dasar gedung: wallet yang terhubung adalah patron di sini (Dev Brief §8.3). */
+  ring: THREE.Mesh<THREE.TorusGeometry, THREE.MeshLambertMaterial>;
+  /** 0..1: seberapa terlihat cincinnya (memudar masuk/keluar saat status patron berubah). */
+  ringK: number;
 }
 
 interface Pop {
@@ -282,14 +286,20 @@ interface FlyingCoin {
   fade: boolean;
 }
 
+const NO_PATRON: ReadonlySet<string> = new Set();
+
 export function CityScene({
   agents,
   selectedId = null,
   onSelect,
   workRatioPct = null,
   burnPulse = 0,
+  patronIds,
 }: {
   agents: CityAgent[];
+  /** id Wright (agents.id) yang stake-nya dipegang wallet yang terhubung. Gedung-gedung ini mendapat cincin emas
+   *  di dasarnya. Kosong / tidak diberikan = tanpa cincin. */
+  patronIds?: ReadonlySet<string>;
   /** Work Ratio 24 jam (persen) dari Weighhouse -- mengatur kilau jendela landmark Weighhouse.
    *  null = belum ada data (jendela redup). */
   workRatioPct?: number | null;
@@ -330,6 +340,10 @@ export function CityScene({
   useEffect(() => {
     burnPulseRef.current = burnPulse;
   }, [burnPulse]);
+  const patronRef = useRef<ReadonlySet<string>>(patronIds ?? NO_PATRON);
+  useEffect(() => {
+    patronRef.current = patronIds ?? NO_PATRON;
+  }, [patronIds]);
   const selectedRef = useRef(selectedId);
   const onSelectRef = useRef(onSelect);
   useEffect(() => {
@@ -798,6 +812,23 @@ export function CityScene({
         mesh.scale.y = h;
         map.repeat.set(1, Math.max(1, Math.round(h * 0.9)));
         emissiveMap.repeat.copy(map.repeat);
+        // Cincin patron: torus emas rata di atas lempeng Ward, lebih lebar dari diagonal gedung (2,3 x 2,3 -> r ~1,63).
+        // Material per gedung (opasitas dianimasikan sendiri-sendiri); geometri di-dispose lewat scene.traverse.
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(1.78, 0.075, 8, 56),
+          new THREE.MeshLambertMaterial({
+            color: 0xe6c36a,
+            emissive: 0xe0a21a,
+            emissiveIntensity: 0.6,
+            transparent: true,
+            opacity: 0,
+          }),
+        );
+        ring.rotation.x = Math.PI / 2;
+        ring.position.set(x, 0.5, z);
+        ring.visible = false;
+        scene.add(ring);
+
         buildings.set(agent.id, {
           agentId: agent.id,
           district: districtId,
@@ -816,6 +847,8 @@ export function CityScene({
           status: agent.status,
           revenue: agent.revenue30d,
           delay: wardDelay + 0.3 + k * 0.08,
+          ring,
+          ringK: 0,
         });
       });
     });
@@ -1808,6 +1841,20 @@ export function CityScene({
         project(labelPos, b.label);
         b.label.style.opacity = String(grow(b.delay + 0.35, 0.35, easeOut));
         highlightLabel(b.label, hovered || selectedRef.current === b.agentId);
+
+        // Cincin patron: memudar masuk/keluar mengikuti status wallet; berdenyut pelan (diam bila reduced motion).
+        const ringWant = patronRef.current.has(b.agentId) ? 1 : 0;
+        b.ringK = reduceMotion
+          ? ringWant
+          : b.ringK + (ringWant - b.ringK) * Math.min(1, dt * 5);
+        if (Math.abs(b.ringK - ringWant) < 0.002) b.ringK = ringWant;
+        b.ring.visible = b.ringK > 0.01 && rise > 0.001;
+        if (b.ring.visible) {
+          const pulse = reduceMotion ? 0.5 : Math.sin(t * 2.2 + b.phase) * 0.5 + 0.5;
+          b.ring.material.opacity = b.ringK * (0.78 + 0.22 * pulse);
+          b.ring.material.emissiveIntensity = 0.45 + pulse * 0.45 + night * 0.35;
+          b.ring.scale.setScalar((0.92 + 0.08 * b.ringK) * (hovered ? 1.05 : 1));
+        }
 
         b.roofDeco.visible = rise > 0.98;
         b.roofDeco.position.set(b.mesh.position.x, top, b.mesh.position.z);

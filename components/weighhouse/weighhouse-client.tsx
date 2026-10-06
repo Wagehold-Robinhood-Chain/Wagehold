@@ -20,8 +20,10 @@ import {
   explorerToken,
   explorerTx,
 } from '@/lib/web3/addresses';
+import { ledgerHint, ledgerSentence } from '@/lib/patronage-city';
 import type {
   LedgerRow,
+  PatronageSummary,
   Summary,
   TopBuilding,
   Win,
@@ -59,6 +61,7 @@ const BUCKET_COLOR: Record<string, string> = {
   locker: '#6c7392',
   strongbox: C.patrons,
   splitter: '#8dbf7f',
+  patronage: '#d98fb4',
   treasuries: C.tithe,
   circulating: '#2e3556',
 };
@@ -318,7 +321,7 @@ export function WeighhouseClient({
         {summary?.supply ? (
           <SupplyBlock
             supply={summary.supply}
-            stakedByPatrons={summary.stakedByPatrons}
+            patronage={summary.patronage}
           />
         ) : (
           <Empty>No supply snapshot yet.</Empty>
@@ -474,10 +477,10 @@ function Tile({
 
 function SupplyBlock({
   supply,
-  stakedByPatrons,
+  patronage,
 }: {
   supply: NonNullable<Summary['supply']>;
-  stakedByPatrons: number;
+  patronage: PatronageSummary;
 }) {
   const bars = supply.buckets.filter((b) => b.amount > 0);
   return (
@@ -550,21 +553,62 @@ function SupplyBlock({
                 </td>
               </tr>
             ))}
-            <tr className="border-t border-line/60 text-faint">
-              <td className="py-1.5">
-                Staked by patrons <span>(simulation)</span>
-              </td>
-              <td className="py-1.5 text-right font-mono text-[12px]">
-                {fmtWageUnit(stakedByPatrons)}
-              </td>
-              <td className="py-1.5 text-right text-[11px]" colSpan={2}>
-                off-chain until Patronage ships
-              </td>
-            </tr>
+            {/* Memo (bukan bucket): turunan event Patronage dari indexer, semua waktu. Stake sudah termasuk di
+                bucket "Patronage" di atas (saldo kontrak). */}
+            <PatronageMemoRows patronage={patronage} />
           </tbody>
         </table>
       </div>
     </div>
+  );
+}
+
+function PatronageMemoRows({ patronage }: { patronage: PatronageSummary }) {
+  const note = !patronage.configured
+    ? "Patronage isn't live on this network yet"
+    : !patronage.ok
+      ? 'Patronage data is unavailable right now'
+      : null;
+  const value = (n: number) => (note ? '—' : fmtWageUnit(n, 2));
+  return (
+    <>
+      <tr className="border-t border-line/60 text-faint">
+        <td className="py-1.5">
+          <Tip formula="Σ stake of every patron in every building, derived from Staked and UnstakeRequested events. Included in the Patronage balance above. Indexer data lags the chain by a few minutes.">
+            Staked by patrons
+          </Tip>{' '}
+          <span>(on-chain)</span>
+        </td>
+        <td className="py-1.5 text-right font-mono text-[12px]">
+          {value(patronage.stakedWage)}
+        </td>
+        <td className="py-1.5 text-right text-[11px]" colSpan={2}>
+          {note ??
+            `${patronage.patrons} ${patronage.patrons === 1 ? 'patron' : 'patrons'} · ${patronage.buildings} ${patronage.buildings === 1 ? 'building' : 'buildings'}`}
+        </td>
+      </tr>
+      <tr className="border-t border-line/60 text-faint">
+        <td className="py-1.5">
+          <Tip formula="Σ RewardNotified events: the patrons' share of sealed wages that was shared among staked patrons. All time. A past amount, not a forecast.">
+            Patron rewards paid
+          </Tip>{' '}
+          <span>(all time)</span>
+        </td>
+        <td className="py-1.5 text-right font-mono text-[12px]">
+          {value(patronage.rewardsPaidWage)}
+        </td>
+        <td className="py-1.5 text-right text-[11px]" colSpan={2}>
+          {note ?? (
+            <Tip
+              className="justify-end"
+              formula="Σ RewardRedirected events: when a building had no staked patron at the moment a wage was sealed, the patrons' share went to the treasury instead."
+            >
+              {fmtWageUnit(patronage.redirectedWage, 2)} redirected to treasury
+            </Tip>
+          )}
+        </td>
+      </tr>
+    </>
   );
 }
 
@@ -795,7 +839,7 @@ function TopTable({ rows }: { rows: TopBuilding[] }) {
               </td>
               <td className="text-right font-mono text-[12px]">{r.jobs}</td>
               <td className="text-right font-mono text-[12px]">
-                {fmtWage(r.staked)} <span className="text-faint">(sim)</span>
+                {fmtWage(r.staked)}
               </td>
               <td className="text-right">
                 {r.rating == null ? (
@@ -816,12 +860,13 @@ function LedgerTable({ rows }: { rows: LedgerRow[] }) {
   if (!rows.length) return <Empty>No on-chain events indexed yet.</Empty>;
   return (
     <div className="max-h-[420px] overflow-auto">
-      <table className="w-full min-w-[560px] text-left text-[12.5px]">
+      <table className="w-full min-w-[680px] text-left text-[12.5px]">
         <thead className="sticky top-0 bg-surface text-[11px] uppercase text-faint">
           <tr>
             <th className="px-3.5 py-1.5 font-normal">Time</th>
             <th className="font-normal">Event</th>
             <th className="text-right font-normal">Amount</th>
+            <th className="pl-4 font-normal">Building</th>
             <th className="pl-4 font-normal">Job</th>
             <th className="px-3.5 text-right font-normal">Tx</th>
           </tr>
@@ -836,20 +881,47 @@ function LedgerTable({ rows }: { rows: LedgerRow[] }) {
                 {ago(r.at)}
               </td>
               <td>
-                <Badge
-                  tone={
-                    r.kind === 'Burned'
-                      ? 'warn'
-                      : r.kind === 'Sealed'
-                        ? 'good'
-                        : 'muted'
-                  }
-                >
-                  {r.kind}
-                </Badge>
+                <span title={ledgerHint(r.kind)}>
+                  <Badge
+                    tone={
+                      r.kind === 'Burned'
+                        ? 'warn'
+                        : r.kind === 'Sealed' ||
+                            r.kind === 'Staked' ||
+                            r.kind === 'Patron reward'
+                          ? 'good'
+                          : 'muted'
+                    }
+                  >
+                    {r.kind}
+                  </Badge>
+                </span>
+                {(() => {
+                  const sentence = ledgerSentence({
+                    kind: r.kind,
+                    amountText: r.amount == null ? null : fmtWageUnit(r.amount, 2),
+                    building: r.building,
+                    wallet: r.wallet,
+                  });
+                  return sentence ? (
+                    <div className="mt-0.5 text-[11px] text-faint">{sentence}</div>
+                  ) : null;
+                })()}
               </td>
               <td className="text-right font-mono text-[12px]">
                 {r.amount == null ? '—' : fmtWageUnit(r.amount, 2)}
+              </td>
+              <td className="pl-4">
+                {r.building ? (
+                  <Link
+                    href={`/agents/${r.building.id}`}
+                    className="hover:underline"
+                  >
+                    {r.building.name}
+                  </Link>
+                ) : (
+                  <span className="text-faint">—</span>
+                )}
               </td>
               <td className="pl-4">
                 {r.jobId ? (
